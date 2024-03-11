@@ -1,4 +1,5 @@
 import numpy as np
+import pulp
 
 
 class BaseFragment:
@@ -42,11 +43,18 @@ class BaseNode:
 
 
 class BaseCut:
-    def __init__(self, swc: list[tuple], soma: list[int]):
+    def __init__(self, swc: list[tuple], soma: list[int], quiet=False):
+        self._quiet = quiet
         self._swc = swc
         self._soma = soma
         self._fragment: dict[int, BaseFragment] = {}
         self._fragment_trees: dict[int, dict[int, BaseNode]] = {}
+        self._problem: pulp.LpProblem | None = None
+        self._belonging: dict[int, tuple[int, float]] = {}
+
+    @property
+    def belonging(self):
+        return self._belonging
 
     @property
     def swc(self):
@@ -59,6 +67,68 @@ class BaseCut:
     @property
     def fragment_trees(self):
         return self._fragment_trees
+
+    def assign(self):
+        tree = [list(t) for t in self._swc]
+        for frag_id, (src_id, _) in self._belonging.items():
+            for i in self._fragment[frag_id].nodes:
+                tree[i][1] = src_id
+        tree = [tuple(t) for t in tree]
+        return tree
+
+    def cut(self):
+        trees = [{} for i in self._soma]
+        for frag_id, (src_id, _) in self._belonging.items():
+            par_frag_id = self._fragment_trees[src_id][frag_id].parent
+            if self.fragment_trees[src_id][par_frag_id].reverse:
+                pass
+            else:
+                pass
+
+            self._fragment[k].nodes
+        return trees
+
+    def _linear_programming(self):
+        """
+        Using linear programming to retrieve the weights of each node
+        """
+        self._problem = pulp.LpProblem('Neuron Graph Cut by ZZH', pulp.LpMinimize)
+
+        # finding variables for fragment/soma pairs that require solving
+        scores = {}      # var_i_s, i: fragment id, s: soma id
+        for i, frag in self._fragment.items():
+            if len(frag.traversed) > 1:  # mixed sources
+                scores[i] = {}
+                for s in frag.traversed:
+                    scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
+
+        # objective func: cost * score
+        self._problem += pulp.lpSum(
+            pulp.lpSum(
+                self._fragment_trees[s][i].cost * score for s, score in frag_vars.items()
+            ) for i, frag_vars in scores.items()
+        ), "Global Penalty"
+
+        # constraints
+        for i, frag_vars in scores.items():
+            self._problem += (pulp.lpSum(score for score in frag_vars.values()) == 1,
+                              f"Membership Normalization for Fragment {i}")
+            for s, score in frag_vars.items():
+                p = self._fragment_trees[s][i].parent
+                if p in scores:
+                    self._problem += score <= scores[p][s], \
+                        f"Tree Topology Enforcement for Score_{i}_{s}"
+
+        self._problem.solve()
+
+        self._belonging = {}
+        for variable in self._problem.variables():
+            frag_id, src = variable.name.split('_')[1:]
+            frag_id, src = int(frag_id), int(src)
+            if frag_id not in self._belonging or self._belonging[frag_id][1] < variable.varValue:
+                self._belonging[frag_id] = src, variable.varValue
+        if not self._quiet:
+            print("Finished linear programming.")
 
 
 class BaseMetric:

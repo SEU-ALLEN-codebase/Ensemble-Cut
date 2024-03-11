@@ -8,7 +8,7 @@ class EnsembleFragment(BaseFragment):
 
     def __init__(self):
         super().__init__()
-        self.path_len = 0.      # the path length of this fragment
+        self.path_len = 0.  # the path length of this fragment
 
 
 class EnsembleNode(BaseNode):
@@ -18,18 +18,19 @@ class EnsembleNode(BaseNode):
 
     def __init__(self, id):
         super().__init__(id)
-        self.tot_gof = 0.           # the gof of this fragment w.r.t. a soma
-        self.path_dist = 0.     # the path distance to soma
+        self.gof_cost = 0.  # the gof of this fragment w.r.t. a soma
+        self.path_dist = 0.  # the path distance to soma
 
 
 class EnsembleMetric(BaseMetric):
-    def __init__(self, gof_weight=1., angle_weight=1., radius_weight=1., anchor_dist=20.,
+    def __init__(self, gof_weight=1., angle_weight=1., radius_weight=1., anchor_dist=20., avg_branch_len=100.,
                  distribution=Distribution(), epsilon=1e-10):
         """
         :param gof_weight: the weight of the global gof metric
         :param angle_weight: the weight of the local angle metric
         :param radius_weight: the weight of the local radius metric
         :param anchor_dist: the distance to calculate fragment angle
+        :param avg_branch_len: the (expected) average branch length, used to scale the probability of gof
         :param distribution: GOF distribution class, should load the data before use
         :param epsilon: for preventing zero division
         """
@@ -38,8 +39,9 @@ class EnsembleMetric(BaseMetric):
         self._angle_weight = angle_weight
         self._radius_weight = radius_weight
         self._anchor_dist = anchor_dist
+        self.avg_branch_len = avg_branch_len
         self._epsilon = epsilon
-        self.distribution = Distribution()
+        self._distribution = Distribution()
 
     def init_fragment(self, cut, frag: EnsembleFragment):
         # calculate path length
@@ -56,19 +58,19 @@ class EnsembleMetric(BaseMetric):
         pts_list = cut.fragment[frag_ch].nodes
         if not reverse:
             pts_list = pts_list[::-1]
-        gof = self.get_gof(pts_list, cut.swc[soma])
-        gof_prob = self.distribution.probability(gof)
         frag_node: EnsembleNode = cut.fragment_trees[soma][frag_par]
         frag: EnsembleFragment = cut.fragment[frag_ch]
-        weight = np.log(1 + frag.path_len)
-        path_dist = frag_node.path_dist + frag.path_len
-        gof_mean = gof_prob
-        dist = frag_node.path_dist + gof * frag.path_len
-        cost = angle + radius + dist / frag.path_len * self._gof_weight
-        return {
-            'cost': cost,
-            'path_dist': path_dist
-        }
+
+        ret = {}
+        ret['path_dist'] = frag_node.path_dist + frag.path_len
+        frag_gof = self.get_gof(pts_list, cut.swc[soma])
+        pseudo_order = self.avg_branch_len / ret['path_dist']  # farther branches will be more even in probability
+        frag_gof_prob = self._distribution.probability(frag_gof) * min(1, np.log(1 + pseudo_order))
+        # no suppressing short branches
+        ret['gof_cost'] = frag_node.gof_cost + (1 - frag_gof_prob) * frag.path_len
+        ret['cost'] = angle * self._angle_weight + radius * self._radius_weight + \
+                      ret['gof_cost'] / ret['path_dist'] * self._gof_weight  # equals avg gof along the path
+        return ret
 
     def _path_upstream(self, cut, soma: int, frag_id: int):
         """
@@ -80,7 +82,7 @@ class EnsembleMetric(BaseMetric):
         frag_node = fragment_tree[frag_id]
         pts_list = []
         radius_list = []
-        while path_dist < self._anchor_dist:    # stop when exceeding the anchor dist
+        while path_dist < self._anchor_dist:  # stop when exceeding the anchor dist
             # nodes in a fragment start from child to parent in the original tree
             # the path needs to start from a far end whenever
             a, b, c = self._path_within(cut, frag_node.id, frag_node.reverse, path_dist, True)
@@ -110,7 +112,7 @@ class EnsembleMetric(BaseMetric):
             if len(pts_list) > 1:
                 path_dist += np.linalg.norm(pts_list[-2] - pts_list[-1])
             if path_dist > self._anchor_dist:
-                break   # stop when exceeding the anchor dist
+                break  # stop when exceeding the anchor dist
         if return_distance:
             return pts_list, radius_list, path_dist
         else:
@@ -151,7 +153,7 @@ class EnsembleMetric(BaseMetric):
         tan /= tan_norm + self._epsilon
         ps = pts_list[:-1] - soma
         ps_norm = np.linalg.norm(ps, axis=1)
-        ps /= ps_norm + 1
+        ps /= ps_norm + self._epsilon
         proj = np.clip(np.sum(tan * ps, axis=1), -1, 1)
         gof = np.mean(np.arccos(proj))
         return gof

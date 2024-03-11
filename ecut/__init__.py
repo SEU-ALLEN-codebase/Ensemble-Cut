@@ -1,1 +1,1 @@
-from .graph_cut import GCut
+from .graph_cut import ECut

@@ -1,5 +1,3 @@
-import numpy as np
-import pulp
 from .swc_handler import get_child_dict
 from sklearn.neighbors import KDTree
 from .queue import PriorityQueue
@@ -18,25 +16,24 @@ class ECut(BaseCut):
 
     """
 
-    def __init__(self, tree: list[tuple], soma: list[int], children: dict[set] = None, adjacency: dict[int, set] = 5.,
-                 metric=EnsembleMetric(), quiet=False, epsilon=1e-10):
+    def __init__(self, swc: list[tuple], soma: list[int], children: dict[set] = None,
+                 adjacency: dict[int, set] | float = 5., metric=EnsembleMetric()):
         """
 
-        :param tree: swc tree, whose id should match the line number
+        :param swc: swc tree, whose id should match the line number
         :param soma: list of soma nodes, must match the tree node id
         :param children: children dict of the swc tree,
         :param adjacency: close non-connecting neighbours
         :param metric: the metric to compute the cost on each fragment
-        :param quiet: whether to print debug messages
         """
-        super().__init__(tree, soma)
-        self._quiet = quiet
-        self._epsilon = epsilon
+        super().__init__(swc, soma)
         self._metric = metric
         self._children = self._get_children() if children is None else children
-        self._adjacency = adjacency if isinstance(adjacency, dict) else self._get_adjacency(adjacency)
-        self._end2frag: dict[int, set[int]]
-        self._problem: pulp.LpProblem
+        if isinstance(adjacency, dict):
+            self._adjacency = adjacency
+        else:
+            self._adjacency = self._get_adjacency(adjacency)
+        self._end2frag: dict[int, set[int]] | None = None
 
     def _get_children(self) -> dict[int, set]:
         """
@@ -118,7 +115,7 @@ class ECut(BaseCut):
         # extract connectivity among fragments
         # a fragment can be connected at two ends
         # and non-connecting but close fragment ends will also be considered
-        for k, v in self.fragment.items():
+        for k, v in self._fragment.items():
             end1 = v.nodes[0]
             v.end1_adj = self._end2frag[end1] - {k}    # the connecting nodes are shared among fragments
             for i in self._adjacency[end1]:
@@ -127,7 +124,7 @@ class ECut(BaseCut):
             v.end2_adj = self._end2frag[end2] - {k}
             for i in self._adjacency[end2]:
                 v.end2_adj |= self._end2frag[i]
-            self._metric.init_fragment(v)
+            self._metric.init_fragment(self, v)
         if not self._quiet:
             print("Finished fragment extraction.")
 
@@ -166,9 +163,9 @@ class ECut(BaseCut):
         queue = PriorityQueue()
 
         # initialize the fragment tree
-        fragment_tree = self.fragment_trees[soma] = {}
+        fragment_tree = self._fragment_trees[soma] = {}
         other_soma = set(self._soma) - {soma}
-        for i in self.fragment:
+        for i in self._fragment:
             fragment_tree[i] = BaseNode(i)
         # initialize the starting fragments (connected to the designated soma)
         for i in self._end2frag[soma]:
@@ -176,7 +173,7 @@ class ECut(BaseCut):
             queue.add_task(i, 0)
             cur_node.cost = 0
             cur_node.parent = -1
-            if soma == self.fragment[i].nodes[0]:    # when soma is the far end of this fragment, invert
+            if soma == self._fragment[i].nodes[0]:    # when soma is the far end of this fragment, invert
                 cur_node.reverse = True
 
         # BFS
@@ -186,9 +183,9 @@ class ECut(BaseCut):
                 break
             cur_node = fragment_tree[cheapest]
             cur_node.visited = True       # popped by the priority queue are visited
-            cur_frag = self.fragment[cheapest]
+            cur_frag = self._fragment[cheapest]
             if not cur_node.passing_other_soma:
-                # only a controversial fragment is considered for linear programming
+                # only a controversial _fragment is considered for linear programming
                 # it has more than 1 traversed soma without passing other soma
                 cur_frag.traversed.add(soma)
 
@@ -197,7 +194,7 @@ class ECut(BaseCut):
                 # reversed fragment the connection is on end2
                 # search far ends
                 next_node = fragment_tree[i]
-                next_frag = self.fragment[i]
+                next_frag = self._fragment[i]
                 if fragment_tree[i].visited:
                     continue
                 # here a fragment can be connected on both ends, a rare but possible case
@@ -227,36 +224,3 @@ class ECut(BaseCut):
         if not self._quiet:
             print(f"Finished fragment MST construction for soma {soma}.")
 
-    def _linear_programming(self):
-        """
-        Using linear programming to retrieve the weights of each node
-        """
-        self._problem = pulp.LpProblem('Neuron Graph Cut by ZZH', pulp.LpMinimize)
-
-        # finding variables for fragment/soma pairs that require solving
-        scores = {}      # var_i_s, i: fragment id, s: soma id
-        for i, frag in self.fragment.items():
-            if len(frag.traversed) > 1:  # mixed sources
-                scores[i] = {}
-                for s in frag.traversed:
-                    scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
-
-        # objective func: cost * score
-        self._problem += pulp.lpSum(
-            pulp.lpSum(
-                self.fragment_trees[s][i].cost * score for s, score in frag_vars.items()
-            ) for i, frag_vars in scores.items()
-        ), "Global Penalty"
-
-        # constraints
-        for i, frag_vars in scores.items():
-            self._problem += (pulp.lpSum(score for score in frag_vars.values()) == 1,
-                              f"Membership Normalization for Fragment {i}")
-            for s, score in frag_vars.items():
-                p = self.fragment_trees[s][i].parent
-                if p in scores:
-                    self._problem += score - scores[p][s] <= -self._epsilon, f"Tree Topology Enforcement for Score_{i}_{s}"
-
-        self._problem.solve()
-        if not self._quiet:
-            print("Finished linear programming.")
