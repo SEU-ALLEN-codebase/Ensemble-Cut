@@ -1,0 +1,7 @@
+NOTICE: This project includes code from the Laboratory of Neuro Imaging at the USC Stevens Neuroimaging and Informatics Institute, which is licensed under the Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) license. You must adhere to the terms of that license when using their code.
+
+If you use the source code, please cite the following article: https://www.nature.com/articles/s41467-019-09515-0
+
+The files located in ecut/gcut_utils contain code that can only be used under the CC BY-NC-SA 4.0 license.
+
+The rest of this project is licensed under the MIT license, unless otherwise stated.
