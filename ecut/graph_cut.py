@@ -224,7 +224,6 @@ class ECut(BaseCut):
                         else:
                             next_node.passing_other_soma = cur_node.passing_other_soma
             # update by extending the adjacency
-            continue
             par_cheapest = cur_node.parent
             for i in cur_frag.end1_adj if cur_node.reverse else cur_frag.end2_adj:
                 # reversed fragment the connection is on end2

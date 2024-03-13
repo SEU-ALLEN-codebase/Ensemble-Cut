@@ -1,7 +1,5 @@
 import numpy as np
 import pulp
-import sys
-import os
 
 
 ListNeuron = list[tuple[int, int, float, float, float, float, int]]

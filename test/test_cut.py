@@ -21,7 +21,6 @@ class MyTestCase(unittest.TestCase):
         for i, t in trees.items():
             write_swc(t, dat_dir / f'gcut_output_{i}.swc')
 
-
     def test2(self):
         tree = [list(t) for t in parse_swc(dat_dir / 'gcut_pseudo.swc')]
         for t in tree:
@@ -35,6 +34,7 @@ class MyTestCase(unittest.TestCase):
         # write_swc(trees, dat_dir / f'gcut_pseudo_output.swc')
         for i, t in trees.items():
             write_swc(t, dat_dir / f'gcut_pseudo_output_{i}.swc')
+
 
 if __name__ == '__main__':
     unittest.main()

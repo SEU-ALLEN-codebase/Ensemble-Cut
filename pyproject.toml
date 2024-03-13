@@ -1,20 +1,20 @@
 [build-system]
-requires = ["setuptools", "wheel", "Cython", "numpy", "setuptools-scm", "cmake_build_extension"]
+requires = ["setuptools", "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ['v3dpy']
+packages = ['ecut']
 
 [project]
-name = "v3d-py-helper"
+name = "E-Cut"
 authors = [
     {name = "Zuohan Zhao", email = "zzhmark@126.com"},
     {name = "Yufeng Liu", email = "yufeng_liu@seu.edu.cn"}
 ]
-description = "Make Vaa3D functions available for high-performance python computation."
+description = "Enhanced G-Cut algorithm on automated segmentation of interweaving neurons"
 readme = "README.md"
 requires-python = ">=3.10"
-keywords = ["vaa3d", "neuron-morphology", "image-processing"]
+keywords = ["linear-programming", "neuron-morphology", "neuorn-tracing"]
 license = { text = "MIT License" }
 dynamic = [ "version" ]
 classifiers = [
@@ -24,12 +24,14 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
+    "scikit-learn",
+    "PuLP"
+
 ]
 
 [project.urls]
-"GitHub Project" = "https://github.com/SEU-ALLEN-codebase/v3d-py-helper"
-"Documentation" = "https://SEU-ALLEN-codebase.github.io/v3d-py-helper"
-"Vaa3D Source" = "https://github.com/Vaa3D/v3d_external"
+"GitHub Project" = "https://github.com/SEU-ALLEN-codebase/E-Cut"
+"Documentation" = "https://SEU-ALLEN-codebase.github.io/E-Cut"
 
 [project.optional-dependencies]
 docs = [ "pdoc" ]
