@@ -13,7 +13,7 @@ $ pip install E-Cut
 
 Construct an `ECut` class object to run the workflow.
 ```python
-from ecut import ECut
+from ecut.graph_cut import ECut
 from ecut.swc_handler import parse_swc, write_swc
 
 # NOTE: the node numbering of this tree should be SORTED, and starts from ZERO.
