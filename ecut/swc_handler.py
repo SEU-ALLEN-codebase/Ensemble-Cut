@@ -385,4 +385,3 @@ def get_soma_from_swc(swcfile):
         soma_str = re.search('.* -1\n', fp.read()).group()
     soma = soma_str.split()
     return soma
-

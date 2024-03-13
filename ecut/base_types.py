@@ -1,5 +1,10 @@
 import numpy as np
 import pulp
+import sys
+import os
+
+
+ListNeuron = list[tuple[int, int, float, float, float, float, int]]
 
 
 class BaseFragment:
@@ -18,6 +23,9 @@ class BaseFragment:
         self.end2_adj = set()
         self.traversed = set()  # for the simplification of the problem
 
+        self.source = None   # the neuron it belongs to
+        self.likelihood = 0  # the likelihood of this fragment belonging to this neuron
+
 
 class BaseNode:
     """
@@ -29,7 +37,7 @@ class BaseNode:
     The cost will be used for optimization. It also checks whether it has passed another soma.
     """
 
-    def __init__(self, id):
+    def __init__(self, id: int):
         self.id = id
         self.parent = None
         self.reverse = False
@@ -43,18 +51,13 @@ class BaseNode:
 
 
 class BaseCut:
-    def __init__(self, swc: list[tuple], soma: list[int], quiet=False):
-        self._quiet = quiet
+    def __init__(self, swc: ListNeuron, soma: list[int], verbose=False):
+        self._verbose = verbose
         self._swc = swc
         self._soma = soma
         self._fragment: dict[int, BaseFragment] = {}
         self._fragment_trees: dict[int, dict[int, BaseNode]] = {}
         self._problem: pulp.LpProblem | None = None
-        self._belonging: dict[int, tuple[int, float]] = {}
-
-    @property
-    def belonging(self):
-        return self._belonging
 
     @property
     def swc(self):
@@ -68,31 +71,61 @@ class BaseCut:
     def fragment_trees(self):
         return self._fragment_trees
 
-    def assign(self):
-        tree = [list(t) for t in self._swc]
-        for frag_id, (src_id, _) in self._belonging.items():
-            for i in self._fragment[frag_id].nodes:
-                tree[i][1] = src_id
-        tree = [tuple(t) for t in tree]
-        return tree
+    def export_swc(self, partition=True):
+        """
+        Export the result swc.
 
-    def cut(self):
-        trees = [{} for i in self._soma]
-        for frag_id, (src_id, _) in self._belonging.items():
-            par_frag_id = self._fragment_trees[src_id][frag_id].parent
-            if self.fragment_trees[src_id][par_frag_id].reverse:
-                pass
+        :param partition: whether to bipartite the solution tree to multiple swc
+        :return: an swc or a dict of swc
+        """
+        if not partition:
+            tree = [list(t) for t in self._swc]
+            for frag in self._fragment.values():
+                for i in frag.nodes:
+                    tree[i][1] = frag.source
+            tree = [tuple(t) for t in tree]
+            return tree
+        trees = dict([(i, {}) for i in self._soma])
+        for frag_id, frag in self._fragment.items():
+            frag_node = self._fragment_trees[frag.source][frag_id]
+            nodes = self._fragment[frag_id].nodes
+            if not frag_node.reverse:
+                nodes = reversed(nodes)
+            par_frag_id = frag_node.parent
+            if par_frag_id == -1:
+                last_id = -1
             else:
-                pass
+                par_frag_node = self._fragment_trees[frag.source][par_frag_id]
+                par_nodes = self._fragment[par_frag_id].nodes
+                if par_frag_node.reverse:
+                    last_id = par_frag_id, par_nodes[-1]
+                else:
+                    last_id = par_frag_id, par_nodes[0]
+            tree = trees[frag.source]
+            for i in nodes:
+                n = list(self._swc[i])
+                if last_id == -1:
+                    n[6] = -1
+                else:
+                    n[6] = last_id
+                n[0] = len(tree)
+                tree[(frag_id, i)] = tuple(n)
+                last_id = frag_id, i
 
-            self._fragment[k].nodes
+        for s, t in trees.items():
+            for k, v in t.items():
+                n = list(v)
+                if n[6] != -1:
+                    n[6] = t[n[6]][0]
+                t[k] = tuple(n)
+            trees[s] = list(t.values())
         return trees
 
     def _linear_programming(self):
         """
         Using linear programming to retrieve the weights of each node
         """
-        self._problem = pulp.LpProblem('Neuron Graph Cut by ZZH', pulp.LpMinimize)
+        self._problem = pulp.LpProblem('ECut', pulp.LpMinimize)
 
         # finding variables for fragment/soma pairs that require solving
         scores = {}      # var_i_s, i: fragment id, s: soma id
@@ -121,13 +154,22 @@ class BaseCut:
 
         self._problem.solve()
 
-        self._belonging = {}
         for variable in self._problem.variables():
             frag_id, src = variable.name.split('_')[1:]
             frag_id, src = int(frag_id), int(src)
-            if frag_id not in self._belonging or self._belonging[frag_id][1] < variable.varValue:
-                self._belonging[frag_id] = src, variable.varValue
-        if not self._quiet:
+            frag = self._fragment[frag_id]
+            if frag.source is None or frag.likelihood < variable.varValue:
+                frag.source = src
+                frag.likelihood = variable.varValue
+
+        for frag in self._fragment.values():
+            if frag.source is None:
+                if len(frag.traversed) == 0:
+                    print(frag.nodes)
+                frag.source = list(frag.traversed)[0]
+                frag.likelihood = 1
+
+        if self._verbose:
             print("Finished linear programming.")
 
 

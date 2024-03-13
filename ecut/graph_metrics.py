@@ -1,6 +1,6 @@
 from sklearn.decomposition import PCA
 import numpy as np
-from base_types import BaseNode, BaseMetric, BaseFragment
+from .base_types import BaseNode, BaseMetric, BaseFragment
 from .gcut_utils.distribution import Distribution
 
 
@@ -41,7 +41,7 @@ class EnsembleMetric(BaseMetric):
         self._anchor_dist = anchor_dist
         self.avg_branch_len = avg_branch_len
         self._epsilon = epsilon
-        self._distribution = Distribution()
+        distribution.load_distribution()
 
     def init_fragment(self, cut, frag: EnsembleFragment):
         # calculate path length
@@ -53,17 +53,16 @@ class EnsembleMetric(BaseMetric):
         # there's a case where pc1 DNE, it returns a vector of (1,0,0)
         pts_par, radius_par = self._path_upstream(cut, soma, frag_par)
         pts_ch, radius_ch = self._path_within(cut, frag_ch, not reverse)
-        angle = self.get_angle(pts_par, pts_ch) * 2 / np.pi * self._angle_weight
+        angle = self.get_angle(pts_par, pts_ch) / np.pi * self._angle_weight
         radius = np.mean(radius_ch) / (np.mean(radius_ch) + np.mean(radius_par)) * self._radius_weight
-        pts_list = cut.fragment[frag_ch].nodes
+        pts_list = [cut.swc[i][2:5] for i in cut.fragment[frag_ch].nodes]
         if not reverse:
             pts_list = pts_list[::-1]
         frag_node: EnsembleNode = cut.fragment_trees[soma][frag_par]
         frag: EnsembleFragment = cut.fragment[frag_ch]
 
-        ret = {}
-        ret['path_dist'] = frag_node.path_dist + frag.path_len
-        frag_gof = self.get_gof(pts_list, cut.swc[soma])
+        ret = {'path_dist': frag_node.path_dist + frag.path_len}
+        frag_gof = self.get_gof(pts_list, cut.swc[soma][2:5])
         pseudo_order = self.avg_branch_len / ret['path_dist']  # farther branches will be more even in probability
         frag_gof_prob = self._distribution.probability(frag_gof) * min(1, np.log(1 + pseudo_order))
         # no suppressing short branches
@@ -105,7 +104,7 @@ class EnsembleMetric(BaseMetric):
         radius_list = []
         nodes = cut.fragment[frag_id].nodes
         if reverse:
-            nodes = nodes[::-1]
+            nodes = reversed(nodes)
         for i in nodes:
             pts_list.append(np.array(cut.swc[i][2:5]))
             radius_list.append(cut.swc[i][5])
@@ -130,8 +129,7 @@ class EnsembleMetric(BaseMetric):
         line_direction = pca.components_[0]
         return line_direction
 
-    @staticmethod
-    def get_angle(pts_list1: list[np.ndarray], pts_list2: list[np.ndarray]):
+    def get_angle(self, pts_list1: list[np.ndarray], pts_list2: list[np.ndarray]):
         """
         The angle between 2 vectors (fitted from 2 point lists), but supplementary.
         the vectors share the start point, but to make it fit for scoring, its supplementary is returned.
@@ -141,18 +139,24 @@ class EnsembleMetric(BaseMetric):
         :param pts_list2: a list of 3D points for another branch
         :return: an angle in arc
         """
-        vec1 = EnsembleMetric.line_fit_pca(pts_list1)
+        vec1 = -EnsembleMetric.line_fit_pca(pts_list1)
         vec2 = EnsembleMetric.line_fit_pca(pts_list2)
-        cos = vec1.dot(vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        return np.pi - np.arccos(np.clip(cos, -1, 1))
+        vec3 = pts_list2[0] - pts_list1[0]
+        if np.linalg.norm(vec3) > self._epsilon:
+            cos1 = vec1.dot(vec3) / (np.linalg.norm(vec1) * np.linalg.norm(vec3))
+            cos2 = vec2.dot(vec3) / (np.linalg.norm(vec2) * np.linalg.norm(vec3))
+            return np.arccos(np.clip(cos1, -1, 1)) + np.arccos(np.clip(cos2, -1, 1))
+        else:
+            cos = vec1.dot(vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+            return np.arccos(np.clip(cos, -1, 1))
 
-    def get_gof(self, pts_list: list[np.ndarray], soma: np.ndarray) -> tuple[float, float]:
+    def get_gof(self, pts_list: list[tuple[float, float, float]], soma: np.ndarray) -> float:
         pts_list = np.array(pts_list)
         tan = pts_list[1:] - pts_list[:-1]
-        tan_norm = np.linalg.norm(tan, axis=1)
+        tan_norm = np.linalg.norm(tan, axis=1, keepdims=True)
         tan /= tan_norm + self._epsilon
         ps = pts_list[:-1] - soma
-        ps_norm = np.linalg.norm(ps, axis=1)
+        ps_norm = np.linalg.norm(ps, axis=1, keepdims=True)
         ps /= ps_norm + self._epsilon
         proj = np.clip(np.sum(tan * ps, axis=1), -1, 1)
         gof = np.mean(np.arccos(proj))

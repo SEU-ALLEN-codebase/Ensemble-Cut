@@ -7,19 +7,19 @@ class Entry:
         self.cost = cost
 
     def __lt__(self, other):
-        return self.cost < other.__call__
+        return self.cost < other.cost
 
     def __gt__(self, other):
-        return self.cost > other.__call__
+        return self.cost > other.cost
 
     def __le__(self, other):
-        return self.cost <= other.__call__
+        return self.cost <= other.cost
 
     def __ge__(self, other):
-        return self.cost >= other.__call__
+        return self.cost >= other.cost
 
     def __eq__(self, other):
-        return self.cost == other.__call__
+        return self.cost == other.cost
 
 
 class PriorityQueue:

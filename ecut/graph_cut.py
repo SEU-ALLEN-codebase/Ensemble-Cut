@@ -1,8 +1,8 @@
 from .swc_handler import get_child_dict
 from sklearn.neighbors import KDTree
 from .queue import PriorityQueue
-from .base_types import BaseCut, BaseNode, BaseFragment
-from .graph_metrics import EnsembleMetric
+from .base_types import BaseCut
+from .graph_metrics import EnsembleMetric, EnsembleNode, EnsembleFragment
 
 
 class ECut(BaseCut):
@@ -17,7 +17,7 @@ class ECut(BaseCut):
     """
 
     def __init__(self, swc: list[tuple], soma: list[int], children: dict[set] = None,
-                 adjacency: dict[int, set] | float = 5., metric=EnsembleMetric()):
+                 adjacency: dict[int, set] | float = 5., metric=EnsembleMetric(), *args, **kwargs):
         """
 
         :param swc: swc tree, whose id should match the line number
@@ -26,7 +26,7 @@ class ECut(BaseCut):
         :param adjacency: close non-connecting neighbours
         :param metric: the metric to compute the cost on each fragment
         """
-        super().__init__(swc, soma)
+        super().__init__(swc, soma, *args, **kwargs)
         self._metric = metric
         self._children = self._get_children() if children is None else children
         if isinstance(adjacency, dict):
@@ -63,17 +63,17 @@ class ECut(BaseCut):
         for k, v in adjacency.items():
             for i in v:
                 adjacency[i].add(k)
-        if not self._quiet:
+        if self._verbose:
             print("Adjacency computed.")
         return adjacency
 
     def run(self):
-        if not self._quiet:
+        if self._verbose:
             print("Starting G-Cut.")
         self._extract_fragment()
         self._resolve_fragment_tree()
         self._linear_programming()
-        if not self._quiet:
+        if self._verbose:
             print("Finished G-Cut.")
 
     def _extract_fragment(self):
@@ -87,7 +87,7 @@ class ECut(BaseCut):
         for k, v in self._children.items():
             if len(v) > 0:     # tip nodes, start fragment recording
                 continue
-            new_frag = self._fragment[k] = BaseFragment()
+            new_frag = self._fragment[k] = EnsembleFragment()
             new_frag.nodes.append(k)
             self._end2frag[k] = {k}     # map the ends to their fragment, non-unique
             p = self._swc[k][6]
@@ -102,30 +102,34 @@ class ECut(BaseCut):
                     # proceed to construct the next fragment
                     self._end2frag[p] = {k, p}       # also add the next fragment
                     k = p
-                    new_frag = self._fragment[k] = BaseFragment()
+                    new_frag = self._fragment[k] = EnsembleFragment()
                     new_frag.nodes.append(k)
                 p = self._swc[p][6]
             else:
                 # a special case for a tree root
-                p = new_frag.nodes[-1]
-                if p not in self._end2frag:
-                    self._end2frag[p] = {k}
+                if len(new_frag.nodes) < 2:
+                    del self._fragment[k]
+                    self._end2frag[k].remove(k)
                 else:
-                    self._end2frag[p].add(k)
+                    p = new_frag.nodes[-1]
+                    if p not in self._end2frag:
+                        self._end2frag[p] = {k}
+                    else:
+                        self._end2frag[p].add(k)
         # extract connectivity among fragments
         # a fragment can be connected at two ends
         # and non-connecting but close fragment ends will also be considered
         for k, v in self._fragment.items():
             end1 = v.nodes[0]
-            v.end1_adj = self._end2frag[end1] - {k}    # the connecting nodes are shared among fragments
-            for i in self._adjacency[end1]:
-                v.end1_adj |= self._end2frag[i]
+            v.end1_adj =  self._end2frag[end1] - {k}        # omit self
+            for i in self._adjacency[end1]:     # find adjacent nodes
+                v.end1_adj |= self._end2frag[i]     # add any frag related
             end2 = v.nodes[-1]
             v.end2_adj = self._end2frag[end2] - {k}
             for i in self._adjacency[end2]:
                 v.end2_adj |= self._end2frag[i]
             self._metric.init_fragment(self, v)
-        if not self._quiet:
+        if self._verbose:
             print("Finished fragment extraction.")
 
     def _resolve_fragment_tree(self):
@@ -140,7 +144,7 @@ class ECut(BaseCut):
         self._fragment_trees = {}   # corresponding to the soma list
         for i in self._soma:
             self._prim(i)
-        if not self._quiet:
+        if self._verbose:
             print("Finished fragment MST construction for all soma.")
 
     def _prim(self, soma: int):
@@ -166,15 +170,14 @@ class ECut(BaseCut):
         fragment_tree = self._fragment_trees[soma] = {}
         other_soma = set(self._soma) - {soma}
         for i in self._fragment:
-            fragment_tree[i] = BaseNode(i)
+            fragment_tree[i] = EnsembleNode(i)
+
         # initialize the starting fragments (connected to the designated soma)
         for i in self._end2frag[soma]:
             cur_node = fragment_tree[i]
             queue.add_task(i, 0)
-            cur_node.cost = 0
-            cur_node.parent = -1
-            if soma == self._fragment[i].nodes[0]:    # when soma is the far end of this fragment, invert
-                cur_node.reverse = True
+            # when soma is the far end of this fragment, invert
+            cur_node.update(cost=0, parent=-1, reverse=(soma == self._fragment[i].nodes[0]))
 
         # BFS
         while not queue.empty():
@@ -188,14 +191,13 @@ class ECut(BaseCut):
                 # only a controversial _fragment is considered for linear programming
                 # it has more than 1 traversed soma without passing other soma
                 cur_frag.traversed.add(soma)
-
             # update the cost of the rest of the fragment nodes, which is reflected in the priority queue
             for i in cur_frag.end2_adj if cur_node.reverse else cur_frag.end1_adj:
                 # reversed fragment the connection is on end2
                 # search far ends
                 next_node = fragment_tree[i]
                 next_frag = self._fragment[i]
-                if fragment_tree[i].visited:
+                if next_node.visited:
                     continue
                 # here a fragment can be connected on both ends, a rare but possible case
                 # if the connection is on end1, means the next fragment is reversed
@@ -221,6 +223,46 @@ class ECut(BaseCut):
                             next_node.passing_other_soma = True
                         else:
                             next_node.passing_other_soma = cur_node.passing_other_soma
-        if not self._quiet:
-            print(f"Finished fragment MST construction for soma {soma}.")
+            # update by extending the adjacency
+            continue
+            par_cheapest = cur_node.parent
+            for i in cur_frag.end1_adj if cur_node.reverse else cur_frag.end2_adj:
+                # reversed fragment the connection is on end2
+                # search far ends
+                next_node = fragment_tree[i]
+                next_frag = self._fragment[i]
+                if next_node.visited:
+                    continue
+                if cheapest in next_frag.end1_adj:
+                    if par_cheapest == -1:
+                        next_node.update(cost=0, parent=-1, reverse=True)
+                        queue.add_task(i, 0)
+                    else:
+                        metrics = self._metric(self, soma, par_cheapest, i, reverse=True)
+                        if metrics['cost'] < next_node.cost:
+                            # if the cost is lower, update the fragment node
+                            # it's on end1, far end, so invert
+                            next_node.update(**metrics, parent=par_cheapest, reverse=True)
+                            queue.add_task(i, metrics['cost'])
+                            # if this fragment is leaving another soma
+                            if next_frag.nodes[0] in other_soma:
+                                next_node.passing_other_soma = True
+                            else:
+                                next_node.passing_other_soma = cur_node.passing_other_soma
+                if cheapest in next_frag.end2_adj:
+                    if par_cheapest == -1:
+                        next_node.update(cost=0, parent=-1, reverse=False)
+                        queue.add_task(i, 0)
+                    else:
+                        metrics = self._metric(self, soma, par_cheapest, i, reverse=False)
+                        if metrics['cost'] < next_node.cost:
+                            # it's on end2, near end, keep original
+                            next_node.update(**metrics, parent=par_cheapest, reverse=False)
+                            queue.add_task(i, metrics['cost'])
+                            if next_frag.nodes[-1] in other_soma:
+                                next_node.passing_other_soma = True
+                            else:
+                                next_node.passing_other_soma = cur_node.passing_other_soma
 
+        if self._verbose:
+            print(f"Finished fragment MST construction for soma {soma}.")

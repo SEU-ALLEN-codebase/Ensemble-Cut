@@ -77,7 +77,7 @@ class Distribution:
 
     # P(X >= theta)
     def probability(self, theta):
-        assert 0 <= theta <= np.pi
+        assert 0 <= theta <= np.pi, f'{theta}'
         P = 1 - self.cdf(self.scale(theta))
         assert 0 <= P <= 1
         return P
