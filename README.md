@@ -38,3 +38,16 @@ e = ECut(tree, [0, 100], metric=metric)
 ```
 You can even subclass `ECut` and `EnsembleMetric` to create your own optimization workflow or
 introduce more metrics into it.
+
+## Comparison with the original G-Cut
+
+E-Cut can segment highly complexed topological structures that can hardly be
+handled by G-Cut. In the following case, I construct a pseudo neuron with 2 types
+of common topological errors.
+
+![pseudo](assets/compare.png)
+
+In this example, G-Cut is unable to fix the breakup between neurites (a tip node
+that is very close to another branch). On the other hand, E-Cut considers all
+such cases within a distance threshold by building up a fully interconnected
+network of neurites.
