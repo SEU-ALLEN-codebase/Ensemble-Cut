@@ -39,11 +39,18 @@ e = ECut(tree, [0, 100], metric=metric)
 You can even subclass `ECut` and `EnsembleMetric` to create your own optimization workflow or
 introduce more metrics into it.
 
-## Comparison with the original G-Cut
+## Comparison with G-Cut
 
-E-Cut can segment highly complexed topological structures that can hardly be
-handled by G-Cut. In the following case, I construct a pseudo neuron with 2 types
-of common topological errors.
+E-Cut is enhanced with superior features based on G-Cut.
+
+**First, it introduces angle and radius metrics.** To make them compatible with
+the GOF probability, I replaced the shortest path searching with minimum spanning
+tree, so that all comparisons are performed locally (we take average GOF along
+the neurite path).
+
+**Second, it can handle more complexed topological errors.**
+In the following case, I construct a pseudo neuron with 2 types
+of common topological errors to compare their performance.
 
 ![pseudo](assets/compare.png)
 
