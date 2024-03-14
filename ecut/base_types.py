@@ -194,11 +194,3 @@ class BaseMetric:
         :return: the computed metrics
         """
         pass
-
-
-class BaseSomaDetector:
-    def __init__(self, swc):
-        self._swc = swc
-
-    def run(self) -> list[int]:
-        pass
