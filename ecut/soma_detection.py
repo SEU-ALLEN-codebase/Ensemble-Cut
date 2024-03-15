@@ -2,7 +2,7 @@ import numpy as np
 from skimage import filters, morphology, measure
 from scipy import ndimage
 import pandas as pd
-from skl
+from sklearn.cluster import DBSCAN
 
 
 class DetectImage3D:
@@ -68,6 +68,7 @@ class TiledDetectImage3D:
         """
         self._find_soma = base_detector
         self._tile_size = np.array(tile_size)
+        self._merge_distance = merge_distance
         self._omit_border = np.array(omit_border)
 
     def __call__(self, img: np.ndarray, res: list[float, float, float]):
@@ -91,3 +92,4 @@ class TiledDetectImage3D:
                     pts = [s + p for p in pts if ((self._omit_border < p) & (p < self._tile_size - self._omit_border)).all()]
                     out.extend(pts)
 
+        DBSCAN(self._merge_distance, )
