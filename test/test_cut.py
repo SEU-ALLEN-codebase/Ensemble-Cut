@@ -1,14 +1,14 @@
 import unittest
 from pathlib import Path
 from ecut.swc_handler import parse_swc, write_swc
-from ecut import ECut
+from ecut.graph_cut import ECut
 
 
 dat_dir = Path('data')
 
 
-class MyTestCase(unittest.TestCase):
-    def test1(self):
+class TestCut(unittest.TestCase):
+    def test_real_swc(self):
         tree = [list(t) for t in parse_swc(dat_dir / 'gcut_input.swc')]
         for t in tree:
             t[0] -= 1
@@ -21,7 +21,7 @@ class MyTestCase(unittest.TestCase):
         for i, t in trees.items():
             write_swc(t, dat_dir / f'gcut_output_{i}.swc')
 
-    def test2(self):
+    def test_pseudo_swc(self):
         tree = [list(t) for t in parse_swc(dat_dir / 'gcut_pseudo.swc')]
         for t in tree:
             t[0] -= 1

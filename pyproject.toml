@@ -25,7 +25,10 @@ classifiers = [
 dependencies = [
     "numpy",
     "scikit-learn",
-    "PuLP"
+    "PuLP",
+    "scipy",
+    "scikit-learn",
+    "scikit-image"
 
 ]
 
