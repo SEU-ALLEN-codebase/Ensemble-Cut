@@ -41,10 +41,10 @@ class DetectImage:
         assert len(res) == img.ndim == 3, "Only 3D images are supported"
         assert res[0] > 0 and res[1] > 0 and res[2] > 0, "Resolution must be positive"
         res = res[::-1]
-        desired_size = (np.array(img.shape) * res * self._processing_size / res[0] / img.shape[0]).astype(int)
+        desired_size = (np.array(img.shape) * res * self._processing_size / sum(res[:2]) / sum(img.shape[:2])).astype(int)
         zoom_factors = desired_size / img.shape
         res = np.divide(res, zoom_factors)
-        sf = res[1:].mean()
+        sf = res[:2].mean()
         out = ndimage.zoom(img, zoom=zoom_factors)
         m = np.max(out.flatten())
         out = out / m
@@ -224,11 +224,11 @@ class DetectDistanceTransform:
         """
         assert len(res) == img.ndim == 3, "Only 3D images are supported"
         assert res[0] > 0 and res[1] > 0 and res[2] > 0, "Resolution must be positive"
-
-        desired_size = np.array(self._processing_size)
+        res = res[::-1]
+        desired_size = (np.array(img.shape) * res * self._processing_size / sum(res[:2]) / sum(img.shape[0])).astype(int)
         zoom_factors = desired_size / img.shape
-        res = np.divide(res[::-1], zoom_factors)
-        sf = res[1:].mean()
+        res = np.divide(res, zoom_factors)
+        sf = res[:2].mean()
         out = ndimage.zoom(img, zoom=zoom_factors)
         m = np.max(out.flatten())
         out = out / m
@@ -241,17 +241,16 @@ class DetectDistanceTransform:
         out = out > thr
 
         mask = ndimage.distance_transform_edt(out)
-        out = mask > self._diam_range[0]
+        out = mask > self._diam_range[0] / sf
 
         out, num_labels = morphology.label(out, background=0, return_num=True)
         centers = []
         for label in range(num_labels):
-
-            r = max(mask[out == label]) * 2
+            dmu = max(mask[out == label]) * 2 * sf
             if self._diam_range[0] <= dmu <= self._diam_range[1]:
-                ids = np.where(out == l)
-                centroid = np.round([np.median(u) for u in ids])
-                centroid = np.divide(centroid, zoom_factors)
-                centers.append(centroid)
+                ids = np.where(out == label)
+                weights = out[ids]
+                weighted_center = np.average(out, weights=weights)
+                centers.append(weighted_center)
 
         return centers
