@@ -7,7 +7,25 @@ from multiprocessing import Pool
 from tqdm import tqdm
 from .base_types import ListNeuron
 from skimage import draw
+from sklearn.neighbors import KDTree
 
+
+def merge_points(pts, merge_dist) -> list[np.ndarray]:
+    db = DBSCAN(merge_dist, min_samples=1)
+    db.fit(pts)
+    labels = db.labels_  # Get cluster labels.
+
+    # Initialize an empty list to store the centers of clusters.
+    centers = []
+
+    # For each unique label (except -1 which denotes noise), calculate and store the mean point.
+    for label in set(labels):
+        if label != -1:  # Ignore noise.
+            members = pts[labels == label]  # Get all points in the current cluster.
+            center = np.median(members, axis=0)  # Calculate the center of the current cluster.
+            centers.append(center)
+
+    return centers
 
 class DetectImage:
     """
@@ -18,17 +36,15 @@ class DetectImage:
     2. otsu -> triangle thresholding
     """
 
-    def __init__(self, processing_size=160, diam_range=(5, 20), ada_win=31):
+    def __init__(self, processing_size=(160, 160, 50), diam_range=(5, 20)):
         """
 
-        :param processing_size: the image size in horizontal direction during processing.
-        Downsize the image to the optimal range for morphological operations.
+        :param processing_size: the image size during processing, in x, y, z.
+        Downsize the image to the optimal range for morphological operations. the z size should be small as possible
         :param diam_range: the minimum and maximum diameter in micrometers allowed for the detected somata.
-        :param ada_win: the size of the adaptive thresholding window, in micrometers
         """
         self._processing_size = processing_size
         self._diam_range = diam_range
-        self._ada_win = ada_win
 
     def predict(self, img, res: list[float], thr=None) -> list[np.ndarray]:
         """
@@ -40,15 +56,17 @@ class DetectImage:
         """
         assert len(res) == img.ndim == 3, "Only 3D images are supported"
         assert res[0] > 0 and res[1] > 0 and res[2] > 0, "Resolution must be positive"
-        res = res[::-1]
-        desired_size = (np.array(img.shape) * res * self._processing_size / sum(res[:2]) / sum(img.shape[:2])).astype(int)
+        desired_size = np.array(self._processing_size[::-1])
         zoom_factors = desired_size / img.shape
-        res = np.divide(res, zoom_factors)
-        sf = res[:2].mean()
+        res = np.divide(res[::-1], zoom_factors)
+        sf = res[1:].mean()
         out = ndimage.zoom(img, zoom=zoom_factors)
         m = np.max(out.flatten())
         out = out / m
-        t = filters.threshold_local(out, self._ada_win / sf)
+        win_size = self._diam_range[1] / sf * 2
+        if win_size % 2 == 0:
+            win_size += 1
+        t = filters.threshold_local(out, win_size)
         out = (out - t).clip(0)
         if thr is None:
             thr = filters.threshold_triangle(out)
@@ -57,7 +75,7 @@ class DetectImage:
         out = out > thr
         selem_size = np.amax(np.ceil(zoom_factors)).astype(int)
         clean_selem = morphology.octahedron(selem_size)
-        out = morphology.erosion(out, clean_selem)
+        out = morphology.binary_erosion(out, clean_selem)
         out, num_labels = morphology.label(out, background=0, return_num=True)
         properties = ["label", "equivalent_diameter"]
         props = measure.regionprops_table(out, properties=properties)
@@ -106,7 +124,7 @@ class DetectTiledImage:
         """
         assert len(res) == img.ndim == 3, "Only 3D images are supported"
         assert res[0] > 0 and res[1] > 0 and res[2] > 0, "Resolution must be positive"
-        thr = filters.threshold_triangle(img)
+        thr = filters.threshold_mean(img)
         steps = np.ceil(img.shape / (self._tile_size - 2 * self._omit_border)).astype(int)
         hf = self._tile_size // 2
         z = np.linspace(hf[0], img.shape[0] - hf[0], steps[0], dtype=int)
@@ -128,21 +146,11 @@ class DetectTiledImage:
             for i in tqdm(jobs):
                 prefilter.extend(i.get())
 
-        prefilter = np.array(prefilter)
-        db = DBSCAN(self._merge_dist, min_samples=1)
-        db.fit(prefilter * res[::-1])
-        labels = db.labels_  # Get cluster labels.
-
-        # Initialize an empty list to store the centers of clusters.
-        centers = []
-
-        # For each unique label (except -1 which denotes noise), calculate and store the mean point.
-        for label in set(labels):
-            if label != -1:  # Ignore noise.
-                members = prefilter[labels == label]  # Get all points in the current cluster.
-                center = members.mean(axis=0)  # Calculate the center of the current cluster.
-                centers.append(center)
-
+        if len(prefilter) == 0:
+            return []
+        res = res[::-1]
+        centers = merge_points(np.array(prefilter) * res, self._merge_dist)
+        centers = [c / res for c in centers]
         return centers
 
 
@@ -202,17 +210,15 @@ class DetectTracingMask:
 
 
 class DetectDistanceTransform:
-    def __init__(self, processing_size=160, diam_range=(5, 20), ada_win=31):
+    def __init__(self, processing_size=(160, 160, 50), diam_range=(5, 20)):
         """
 
-        :param processing_size: the image size in horizontal direction during processing.
+        :param processing_size: the image size during processing.
         Downsize the image to the optimal range for morphological operations.
         :param diam_range: the minimum and maximum diameter in micrometers allowed for the detected somata.
-        :param ada_win: the size of the adaptive thresholding window, in micrometers
         """
         self._processing_size = processing_size
         self._diam_range = diam_range
-        self._ada_win = ada_win
 
     def predict(self, img, res: list[float], thr=None) -> list[np.ndarray]:
         """
@@ -224,33 +230,55 @@ class DetectDistanceTransform:
         """
         assert len(res) == img.ndim == 3, "Only 3D images are supported"
         assert res[0] > 0 and res[1] > 0 and res[2] > 0, "Resolution must be positive"
-        res = res[::-1]
-        desired_size = (np.array(img.shape) * res * self._processing_size / sum(res[:2]) / sum(img.shape[0])).astype(int)
+        desired_size = np.array(self._processing_size[::-1])
         zoom_factors = desired_size / img.shape
-        res = np.divide(res, zoom_factors)
-        sf = res[:2].mean()
+        res = np.divide(res[::-1], zoom_factors)
+        sf = res[1:].mean()
         out = ndimage.zoom(img, zoom=zoom_factors)
         m = np.max(out.flatten())
         out = out / m
-        t = filters.threshold_local(out, self._ada_win / sf)
+        win_size = self._diam_range[1] / sf * 2
+        if win_size % 2 == 0:
+            win_size += 1
+        t = filters.threshold_local(out, win_size)
         out = (out - t).clip(0)
         if thr is None:
             thr = filters.threshold_triangle(out)
         else:
             thr = thr / m
         out = out > thr
-
-        mask = ndimage.distance_transform_edt(out)
-        out = mask > self._diam_range[0] / sf
+        selem_size = np.amax(np.ceil(zoom_factors)).astype(int)
+        clean_selem = morphology.octahedron(selem_size)
+        out = morphology.binary_opening(out, clean_selem)
+        mask = ndimage.distance_transform_edt(out, res)
+        out = mask > self._diam_range[0] / 2
 
         out, num_labels = morphology.label(out, background=0, return_num=True)
         centers = []
         for label in range(num_labels):
-            dmu = max(mask[out == label]) * 2 * sf
+            dmu = max(mask[out == label]) * 2
             if self._diam_range[0] <= dmu <= self._diam_range[1]:
                 ids = np.where(out == label)
-                weights = out[ids]
-                weighted_center = np.average(out, weights=weights)
-                centers.append(weighted_center)
+                weighted_center = np.average(np.argwhere(out == label), weights=mask[ids], axis=0)
+                centers.append(weighted_center / zoom_factors)
 
         return centers
+
+
+def soma_consensus(*centers, radius=10, min_vote=3, merge_dist=30, res=(1,1,1)):
+    centers = [c for c in centers if len(c) > 0]
+    kd_trees = [KDTree(c) for c in centers]
+    ans = []
+    for i, c in enumerate(centers):
+        vote = [1] * len(c)
+        for dists in [k.query(c, 1)[0] for j, k in enumerate(kd_trees) if j != i]:
+            for j, d in enumerate(dists):
+                if d < radius:
+                    vote[j] += 1
+        for j, v in enumerate(vote):
+            if v >= min_vote:
+                ans.append(c[j])
+    if len(ans) > 0:
+        ans = merge_points(np.array(ans) * res, merge_dist)
+        ans = [p / res for p in ans]
+    return ans
