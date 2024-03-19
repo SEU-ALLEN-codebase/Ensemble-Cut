@@ -51,7 +51,7 @@ class BaseNode:
 class BaseCut:
     def __init__(self, swc: ListNeuron, soma: list[int], verbose=False):
         self._verbose = verbose
-        self._swc = swc
+        self._swc = dict([(t[0], t) for t in swc])
         self._soma = soma
         self._fragment: dict[int, BaseFragment] = {}
         self._fragment_trees: dict[int, dict[int, BaseNode]] = {}
@@ -77,13 +77,14 @@ class BaseCut:
         :return: an swc or a dict of swc
         """
         if not partition:
-            tree = [list(t) for t in self._swc]
+            tree = [list(t) for t in self._swc.values()]
             for frag in self._fragment.values():
                 for i in frag.nodes:
                     tree[i][1] = frag.source
             tree = [tuple(t) for t in tree]
             return tree
-        trees = dict([(i, {}) for i in self._soma])
+
+        trees = dict([(i, {(-1, 1): (1, *self._swc[i][1:6], -1)}) for i in self._soma])
         for frag_id, frag in self._fragment.items():
             frag_node = self._fragment_trees[frag.source][frag_id]
             nodes = self._fragment[frag_id].nodes
@@ -91,7 +92,7 @@ class BaseCut:
                 nodes = reversed(nodes)
             par_frag_id = frag_node.parent
             if par_frag_id == -1:
-                last_id = -1
+                last_id = -1, 1
             else:
                 par_frag_node = self._fragment_trees[frag.source][par_frag_id]
                 par_nodes = self._fragment[par_frag_id].nodes
@@ -102,11 +103,8 @@ class BaseCut:
             tree = trees[frag.source]
             for i in nodes:
                 n = list(self._swc[i])
-                if last_id == -1:
-                    n[6] = -1
-                else:
-                    n[6] = last_id
-                n[0] = len(tree)
+                n[6] = last_id
+                n[0] = len(tree) + 1
                 tree[(frag_id, i)] = tuple(n)
                 last_id = frag_id, i
 
@@ -162,8 +160,6 @@ class BaseCut:
 
         for frag in self._fragment.values():
             if frag.source is None:
-                if len(frag.traversed) == 0:
-                    print(frag.nodes)
                 frag.source = list(frag.traversed)[0]
                 frag.likelihood = 1
 

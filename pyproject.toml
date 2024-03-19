@@ -28,7 +28,9 @@ dependencies = [
     "PuLP",
     "scipy",
     "scikit-learn",
-    "scikit-image"
+    "scikit-image",
+    "tqdm",
+    "pandas"
 
 ]
 

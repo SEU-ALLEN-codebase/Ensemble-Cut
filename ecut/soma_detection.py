@@ -27,6 +27,7 @@ def merge_points(pts, merge_dist) -> list[np.ndarray]:
 
     return centers
 
+
 class DetectImage:
     """
     Modified from brainlit soma detection algorithm,

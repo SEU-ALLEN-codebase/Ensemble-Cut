@@ -1,30 +1,8 @@
-import sys
 import numpy as np
-import os
 import math
 from scipy.spatial import distance_matrix
 from scipy.interpolate import interp1d
 from .morphology import Morphology
-
-
-class HidePrint:
-    def __enter__(self):
-        self._original_stdout = sys.stdout
-        sys.stdout = open(os.devnull, 'w')
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        sys.stdout.close()
-        sys.stdout = self._original_stdout
-
-
-def region_gray_level(img, ct, win_radius):
-    """
-    if actual window is too small return -1
-    """
-    ind = [np.clip([a - b, a + b + 1], 0, c - 1) for a, b, c in zip(ct, win_radius, img.shape[-1:-4:-1])]
-    ind = np.array(ind, dtype=int)
-    stat = img[ind[2][0]:ind[2][1], ind[1][0]:ind[1][1], ind[0][0]:ind[0][1]].flatten()
-    return stat.mean() if stat.size <= np.sum(win_radius) else -1
 
 
 class ErrorPruning:
@@ -106,9 +84,9 @@ class ErrorPruning:
             dcur = self._length(new_p, pts[-1])
             ratio = (dcur - dd) / (dcur + self._eps)
             pt_a = pts[-1] + (new_p - pts[-1]) * ratio
-            r_a = rad[-1] + (new_r - pts[-1]) * ratio
-            rad.append(r_a)
+            r_a = rad[-1] + (new_r - rad[-1]) * ratio
             pts.append(pt_a)
+            rad.append(r_a)
 
         if return_center_point:
             pt_a = np.mean(pts, axis=0)
@@ -220,7 +198,7 @@ class ErrorPruning:
             rm_ind |= set(protrude[(angles < angle_thr) | (radius_ch > radius_p * radius_amp)])
         return rm_ind
 
-    def _find_mega_crossing(self, morph: Morphology, dist_thr, include_bifurcation=False):
+    def _find_mega_crossing(self, morph: Morphology, dist_thr):
         chains = []
         topo_tree, seg_dict = morph.convert_to_topology_tree()
         topo_morph = Morphology(topo_tree)
@@ -239,7 +217,7 @@ class ErrorPruning:
                          topo_morph.pos_dict[idx][2:5]]
                     if self._length(v[1:], v[:-1], axis=-1).sum() > dist_thr or \
                             dists[topo_morph.index_dict[idx]] <= self._soma_radius or idx not in branch:
-                        if len(chain) > 1 or chain[0] in topo_morph.multifurcation or include_bifurcation:
+                        if len(chain) > 1 or chain[0] in topo_morph.multifurcation:
                             chains.append(chain)
                         chain = []
                         if visited[idx]:
@@ -248,23 +226,31 @@ class ErrorPruning:
                     chain.append(idx)
                 visited[idx] = True
                 idx = topo_morph.pos_dict[idx][6]
-            if len(chain) > 1 or chain and (chain[0] in topo_morph.multifurcation or include_bifurcation):
+            if len(chain) > 1 or chain and chain[0] in topo_morph.multifurcation:
                 chains.append(chain)
         # merge
         return [set.union(*[set(t) for t in chains if t[-1] == head]) for head in np.unique([i[-1] for i in chains])]
 
-    def crossover_prune(self, morph: Morphology, dist_thr=5., angle_thr=120):
+    def crossover_prune(self, morph: Morphology, dist_thr=2., angle_thr=120, check_bif=False):
         """
         Prune crossovers by angle.
 
         :param morph: morphology wrapped swc tree
         :param dist_thr: the max distance between nearby branch nodes in a mega crossover.
         :param angle_thr: branches less than this angle will only be removed when aligned with another branch
+        :param check_bif: if checking bifurcation, in this mode only bifurcation will be checked and pruning
+        is not forced.
         :return: nodes to prune.
         """
-        crossings = self._find_mega_crossing(morph, dist_thr, True)
+        crossings = self._find_mega_crossing(morph, dist_thr)
+        cs = np.array(morph.pos_dict[morph.idx_soma][2:5])
+        if check_bif:
+            to_check = [i for i in morph.bifurcation - set.union(*crossings)
+                        if self._length(cs, morph.pos_dict[i][2:5]) > self._soma_radius]
+        else:
+            to_check = crossings
         rm_ind = set()
-        for x in crossings:
+        for x in to_check:
             # angle
             center, anchor_p, anchor_ch, protrude, _, _ = self._get_anchors(morph, x, self._far_anchor)
             _, near_p, near_ch, _, _, _ = self._get_anchors(morph, x, self._near_anchor)

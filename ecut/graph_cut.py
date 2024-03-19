@@ -1,6 +1,8 @@
+import numpy as np
+
 from .swc_handler import get_child_dict
 from sklearn.neighbors import KDTree
-from .queue import PriorityQueue
+from ._queue import PriorityQueue
 from .base_types import BaseCut
 from .graph_metrics import EnsembleMetric, EnsembleNode, EnsembleFragment
 
@@ -39,8 +41,8 @@ class ECut(BaseCut):
         """
         Generate a children dict from the current tree. Elements are sets, tips are empty.
         """
-        children = get_child_dict(self._swc)
-        for t in self._swc:
+        children = get_child_dict(list(self._swc.values()))
+        for t in self._swc.values():
             if t[0] in children:
                 children[t[0]] = set(children[t[0]])
             else:
@@ -54,11 +56,12 @@ class ECut(BaseCut):
         :param dist: the distance threshold to consider connection between 2 nodes.
         :return: the adjacency dictionary
         """
-        kd = KDTree([t[2:5] for t in self._swc])
-        nearests, dists = kd.query_radius([t[2:5] for t in self._swc], dist, return_distance=True)
-        adjacency = dict()
-        for k, n, d in zip(self._swc, nearests, dists):
-            adjacency[k[0]] = set(n[d < dist]) - {k[0], k[6]} - self._children[k[0]]
+        kd = KDTree([t[2:5] for t in self._swc.values()])
+        keys = np.array(list(self._swc.keys()))
+        inds, dists = kd.query_radius([t[2:5] for t in self._swc.values()], dist, return_distance=True)
+        adjacency = {}
+        for k, i, d in zip(self._swc.values(), inds, dists):
+            adjacency[k[0]] = set(keys[i[d < dist]]) - {k[0], k[6]} - self._children[k[0]]
         # ensure it's undirected graph
         for k, v in adjacency.items():
             for i in v:

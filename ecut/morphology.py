@@ -17,10 +17,9 @@
 #
 #================================================================
 
-import copy
 import numpy as np
 import sys
-from swc_handler import get_child_dict, get_index_dict, find_soma_node, find_soma_index, NEURITE_TYPES
+from .swc_handler import get_child_dict, get_index_dict, find_soma_node, find_soma_index, NEURITE_TYPES
 
 sys.setrecursionlimit(100000)
 
@@ -317,7 +316,7 @@ class Morphology(AbstractTree):
         # put the root/soma node
         new_tree.append(self.pos_dict[self.idx_soma])
 
-        print(f'{len(new_tree)} #nodes left after merging of the original {len(self.tree)} # nodes')
+        # print(f'{len(new_tree)} #nodes left after merging of the original {len(self.tree)} # nodes')
         #print(f'{len(self.tips)}, {len(self.bifurcation)}, {len(self.multifurcation)}')
         return new_tree, seg_dict
 
