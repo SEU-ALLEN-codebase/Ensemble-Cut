@@ -58,6 +58,6 @@ if __name__ == '__main__':
     files = sorted(indir.glob('*.swc'))
     outfiles = [outdir / f.name for f in files]
     arglist = [*zip(files, outfiles)]
-    with Pool(16) as p:
+    with Pool(12) as p:
         for i in tqdm(p.imap(main, arglist), total=len(arglist)):
             pass

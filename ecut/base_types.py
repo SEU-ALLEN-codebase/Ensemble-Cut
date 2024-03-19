@@ -89,7 +89,7 @@ class BaseCut:
             frag_node = self._fragment_trees[frag.source][frag_id]
             nodes = self._fragment[frag_id].nodes
             if not frag_node.reverse:
-                nodes = reversed(nodes)
+                nodes = nodes[::-1]
             par_frag_id = frag_node.parent
             if par_frag_id == -1:
                 last_id = -1, 1
@@ -126,10 +126,9 @@ class BaseCut:
         # finding variables for fragment/soma pairs that require solving
         scores = {}      # var_i_s, i: fragment id, s: soma id
         for i, frag in self._fragment.items():
-            if len(frag.traversed) > 1:  # mixed sources
-                scores[i] = {}
-                for s in frag.traversed:
-                    scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
+            scores[i] = {}
+            for s in frag.traversed:
+                scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
 
         # objective func: cost * score
         self._problem += pulp.lpSum(
