@@ -10,6 +10,7 @@
 import re
 import numpy as np
 from copy import deepcopy
+from queue import SimpleQueue
 
 
 NEURITE_TYPES = {
@@ -385,3 +386,31 @@ def get_soma_from_swc(swcfile):
         soma_str = re.search('.* -1\n', fp.read()).group()
     soma = soma_str.split()
     return soma
+
+
+def sort_swc(tree: list, root=1):
+    ch_dict = get_child_dict(tree)
+    ind = get_index_dict(tree)
+    count = 1
+    temp = list(tree[ind[root]])
+    temp[6] = -1
+    temp[0] = count
+    new_tree = [tuple(temp)]
+    new_dict = {root: 1}
+
+    q = SimpleQueue()
+    q.put_nowait(root)
+
+    while not q.empty():
+        head = tree[ind[q.get_nowait()]][0]
+        if head in ch_dict:
+            for i in ch_dict[head]:
+                count += 1
+                temp = list(tree[ind[i]])
+                temp[0] = count
+                temp[6] = new_dict[head]
+                new_tree.append(tuple(temp))
+                new_dict[i] = count
+                q.put_nowait(i)
+    return new_tree
+

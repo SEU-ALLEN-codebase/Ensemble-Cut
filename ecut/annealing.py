@@ -19,7 +19,7 @@ from sklearn.neighbors import KDTree
 
 class MorphAnneal:
     def __init__(self, swc: ListNeuron, min_gap=10., radius_gap=.5, min_step=5., min_step_ratio=.5, step_size=.5,
-                 epsilon=1e-7, res=(1,1,1), drop_len=40.):
+                 epsilon=1e-7, res=(1,1,1), drop_len=20.):
         self.morph = Morphology(swc)
         self._min_gap = min_gap
         self._eps = epsilon

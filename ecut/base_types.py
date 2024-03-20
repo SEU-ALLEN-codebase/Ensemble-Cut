@@ -47,17 +47,19 @@ class BaseNode:
 
 
 class BaseCut:
-    def __init__(self, swc: ListNeuron, soma: list[int], likelihood_thr=None, verbose=False):
+    def __init__(self, swc: ListNeuron, soma: list[int], res, likelihood_thr=None, verbose=False):
         """
 
-        :param swc:
-        :param soma:
+        :param swc: swc tree
+        :param soma: list of soma id
+        :param res: resolution in x, y, z
         :param likelihood_thr: the minimum likelihood allowed for a fragment to be attached to a neuron, left as None
         to attach it to just the biggest. When multiple sources share a common or big enough likelihood, all of them will be considered.
         :param verbose:
         """
         self._verbose = verbose
         self._swc = dict([(t[0], t) for t in swc])
+        self.res = np.array(res)
         self._soma = soma
         self._fragment: dict[int, BaseFragment] = {}
         self._fragment_trees: dict[int, dict[int, BaseNode]] = {}
@@ -84,14 +86,15 @@ class BaseCut:
         :return: an swc or a dict of swc
         """
         if not partition:
-            tree = [list(t) for t in self._swc.values()]
+            tree = dict([(t[0], list(t)) for t in self._swc.values()])
+            tag = dict(zip(self._soma, range(len(self._soma))))
             for frag in self._fragment.values():
                 for i in frag.nodes:
                     a = list(frag.source.values())
                     b = list(frag.source.keys())
-                    b = np.argmax(b)
-                    tree[i][1] = a[b]
-            tree = [tuple(t) for t in tree]
+                    a = np.argmax(a)
+                    tree[i][1] = tag[b[a]]
+            tree = [tuple(t) for t in tree.values()]
             return tree
 
         trees = dict([(i, {(-1, 1): (1, *self._swc[i][1:6], -1)}) for i in self._soma])
@@ -118,7 +121,7 @@ class BaseCut:
                 frag_node = self._fragment_trees[src][frag_id]
                 nodes = self._fragment[frag_id].nodes
                 if not frag_node.reverse:
-                    nodes = reversed(nodes)
+                    nodes = nodes[::-1]
                 par_frag_id = frag_node.parent
                 if par_frag_id == -1:
                     last_id = -1, 1
