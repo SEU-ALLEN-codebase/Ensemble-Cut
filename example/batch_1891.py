@@ -14,7 +14,7 @@ def main(args):
         tree = [t for t in swc_handler.parse_swc(in_path) if not (t[1] == t[2] == t[3] == 0)]
 
         # detect soma
-        d = DetectTracingMask(3)
+        d = DetectTracingMask(5)
         soma = d.predict(tree, [.3, .3, 1])
 
         # anneal

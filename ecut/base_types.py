@@ -49,7 +49,7 @@ class BaseNode:
 
 
 class BaseCut:
-    def __init__(self, swc: ListNeuron, soma: list[int], verbose=False):
+    def __init__(self, swc: ListNeuron, soma: list[int], likelihood_thr=None, verbose=False):
         self._verbose = verbose
         self._swc = dict([(t[0], t) for t in swc])
         self._soma = soma
@@ -101,13 +101,15 @@ class BaseCut:
                 else:
                     last_id = par_frag_id, par_nodes[0]
             tree = trees[frag.source]
+            if last_id == (3206, 3220):
+                print(frag_id, frag.source, frag.likelihood)
             for i in nodes:
                 n = list(self._swc[i])
                 n[6] = last_id
                 n[0] = len(tree) + 1
                 tree[(frag_id, i)] = tuple(n)
                 last_id = frag_id, i
-
+        print(self.fragment[3206].source, self.fragment[3206].likelihood)
         for s, t in trees.items():
             for k, v in t.items():
                 n = list(v)
@@ -130,6 +132,12 @@ class BaseCut:
                 scores[i] = {}
                 for s in frag.traversed:
                     scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
+            elif len(frag.traversed) == 1:
+                scores[i] = {}
+                for s in frag.traversed:
+                    scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 1, 1)        # const
+            else:
+                raise ValueError('')
 
         # objective func: cost * score
         self._problem += pulp.lpSum(
@@ -137,7 +145,6 @@ class BaseCut:
                 self._fragment_trees[s][i].cost * score for s, score in frag_vars.items()
             ) for i, frag_vars in scores.items()
         ), "Global Penalty"
-
         # constraints
         for i, frag_vars in scores.items():
             self._problem += (pulp.lpSum(score for score in frag_vars.values()) == 1,
@@ -154,6 +161,8 @@ class BaseCut:
             frag_id, src = variable.name.split('_')[1:]
             frag_id, src = int(frag_id), int(src)
             frag = self._fragment[frag_id]
+            if variable.varValue == 0.5:
+                print(frag_id, src, 0.5)
             if frag.source is None or frag.likelihood < variable.varValue:
                 frag.source = src
                 frag.likelihood = variable.varValue
