@@ -9,14 +9,14 @@ from ecut.morphology import Morphology
 
 if __name__ == '__main__':
     # tree = swc_handler.parse_swc('../test/data/gcut_input.swc_sorted.swc')
-    tree = swc_handler.parse_swc(r'D:\rectify\my_app2\17545_17012_13613_3775.swc')
+    tree = swc_handler.parse_swc(r'D:\rectify\my_app2\17302_20929_37312_2540.swc')
 
     # detect soma
-    d = DetectTracingMask(5, 100)
+    d = DetectTracingMask(3, 100)
     soma = d.predict(tree, [.3, .3, 1.])
 
     # anneal
-    a = MorphAnneal(tree, radius_gap=.5)
+    a = MorphAnneal(tree)
     tree = a.run()
 
     # map soma
@@ -37,5 +37,5 @@ if __name__ == '__main__':
         a = p.branch_prune(morph, 45, 10)
         b = p.crossover_prune(morph, 5, 90)
         # c = p.crossover_prune(morph, check_bif=True)
-        t = swc_handler.prune(v, a )
+        t = swc_handler.prune(v, a | b)
         swc_handler.write_swc(t, f'../test/data/whole_{k}.swc')

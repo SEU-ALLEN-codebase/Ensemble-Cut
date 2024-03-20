@@ -97,7 +97,7 @@ class DetectImage:
 
 class DetectTiledImage:
     def __init__(self, tile_size=(256, 256, 64), omit_border=(16, 16, 4), merge_dist=15,
-                 base_detector=DetectImage(), nproc=1):
+                 base_detector=DetectImage(), nproc=None):
         """
 
         :param tile_size: The size of a single tile, indexed by x, y, z.
@@ -133,19 +133,28 @@ class DetectTiledImage:
         x = np.linspace(hf[2], img.shape[2] - hf[2], steps[2], dtype=int)
 
         jobs = []
-        with Pool(self._nproc) as p:
+        prefilter = []
+        if self._nproc is not None:
+            with Pool(self._nproc) as p:
+                for zz in z:
+                    for yy in y:
+                        for xx in x:
+                            s = (zz, yy, xx) - hf
+                            e = (zz, yy, xx) + hf
+                            tile = img[s[0]: e[0], s[1]: e[1], s[2]: e[2]]
+                            jobs.append(p.apply_async(DetectTiledImage.process_find_soma,
+                                                      (self._find_soma, tile, res, thr, s, self._omit_border, self._tile_size)))
+
+                for i in tqdm(jobs):
+                    prefilter.extend(i.get())
+        else:
             for zz in z:
                 for yy in y:
                     for xx in x:
                         s = (zz, yy, xx) - hf
                         e = (zz, yy, xx) + hf
                         tile = img[s[0]: e[0], s[1]: e[1], s[2]: e[2]]
-                        jobs.append(p.apply_async(DetectTiledImage.process_find_soma,
-                                                  (self._find_soma, tile, res, thr, s, self._omit_border, self._tile_size)))
-
-            prefilter = []
-            for i in tqdm(jobs):
-                prefilter.extend(i.get())
+                        prefilter.extend(self.process_find_soma(self._find_soma, tile, res, thr, s, self._omit_border, self._tile_size))
 
         if len(prefilter) == 0:
             return []
@@ -178,7 +187,8 @@ class DetectTracingMask:
         candid = [t for t in swc if t[5] * sf >= self._min_radius]
         pos = np.array([t[2:5] for t in candid])
         rad = np.array([t[5] for t in candid])
-
+        if len(pos) == 0:
+            return []
         db = DBSCAN(self._merge_dist, min_samples=1)
         db.fit(pos * res)
         labels = db.labels_  # Get cluster labels.
