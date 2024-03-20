@@ -3,7 +3,7 @@ import numpy as np
 from .swc_handler import get_child_dict
 from sklearn.neighbors import KDTree
 from ._queue import PriorityQueue
-from .base_types import BaseCut
+from .base_types import BaseCut, ListNeuron
 from .graph_metrics import EnsembleMetric, EnsembleNode, EnsembleFragment
 
 
@@ -18,7 +18,7 @@ class ECut(BaseCut):
 
     """
 
-    def __init__(self, swc: list[tuple], soma: list[int], children: dict[set] = None,
+    def __init__(self, swc: ListNeuron, soma: list[int], children: dict[set] = None,
                  adjacency: dict[int, set] | float = 5., metric=EnsembleMetric(), *args, **kwargs):
         """
 

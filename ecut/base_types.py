@@ -20,9 +20,7 @@ class BaseFragment:
         self.end1_adj = set()  # multiple other nodes, connected or close
         self.end2_adj = set()
         self.traversed = set()  # for the simplification of the problem
-
-        self.source = None   # the neuron it belongs to
-        self.likelihood = 0  # the likelihood of this fragment belonging to this neuron
+        self.source = {}   # the neuron it belongs to, source id -> likelihood
 
 
 class BaseNode:
@@ -50,12 +48,21 @@ class BaseNode:
 
 class BaseCut:
     def __init__(self, swc: ListNeuron, soma: list[int], likelihood_thr=None, verbose=False):
+        """
+
+        :param swc:
+        :param soma:
+        :param likelihood_thr: the minimum likelihood allowed for a fragment to be attached to a neuron, left as None
+        to attach it to just the biggest. When multiple sources share a common or big enough likelihood, all of them will be considered.
+        :param verbose:
+        """
         self._verbose = verbose
         self._swc = dict([(t[0], t) for t in swc])
         self._soma = soma
         self._fragment: dict[int, BaseFragment] = {}
         self._fragment_trees: dict[int, dict[int, BaseNode]] = {}
         self._problem: pulp.LpProblem | None = None
+        self._likelihood_thr: float = likelihood_thr
 
     @property
     def swc(self):
@@ -80,36 +87,57 @@ class BaseCut:
             tree = [list(t) for t in self._swc.values()]
             for frag in self._fragment.values():
                 for i in frag.nodes:
-                    tree[i][1] = frag.source
+                    a = list(frag.source.values())
+                    b = list(frag.source.keys())
+                    b = np.argmax(b)
+                    tree[i][1] = a[b]
             tree = [tuple(t) for t in tree]
             return tree
 
         trees = dict([(i, {(-1, 1): (1, *self._swc[i][1:6], -1)}) for i in self._soma])
         for frag_id, frag in self._fragment.items():
-            frag_node = self._fragment_trees[frag.source][frag_id]
-            nodes = self._fragment[frag_id].nodes
-            if not frag_node.reverse:
-                nodes = reversed(nodes)
-            par_frag_id = frag_node.parent
-            if par_frag_id == -1:
-                last_id = -1, 1
-            else:
-                par_frag_node = self._fragment_trees[frag.source][par_frag_id]
-                par_nodes = self._fragment[par_frag_id].nodes
-                if par_frag_node.reverse:
-                    last_id = par_frag_id, par_nodes[-1]
+
+            candid = []
+            a = list(frag.source.values())
+            b = list(frag.source.keys())
+            if self._likelihood_thr is None:    # max only mode
+                m = None
+                for i in np.argsort(a)[::-1]:
+                    if m is not None and m > a[i]:
+                        break
+                    candid.append(b[i])
+                    m = a[i]
+            else:                               # thresholding mode, bigger than this will all be considered
+                for i in np.argsort(a)[::-1]:
+                    if a[i] < self._likelihood_thr:
+                        break
+                    candid.append(b[i])
+
+            # for each candid source, append the frag nodes
+            for src in candid:
+                frag_node = self._fragment_trees[src][frag_id]
+                nodes = self._fragment[frag_id].nodes
+                if not frag_node.reverse:
+                    nodes = reversed(nodes)
+                par_frag_id = frag_node.parent
+                if par_frag_id == -1:
+                    last_id = -1, 1
                 else:
-                    last_id = par_frag_id, par_nodes[0]
-            tree = trees[frag.source]
-            if last_id == (3206, 3220):
-                print(frag_id, frag.source, frag.likelihood)
-            for i in nodes:
-                n = list(self._swc[i])
-                n[6] = last_id
-                n[0] = len(tree) + 1
-                tree[(frag_id, i)] = tuple(n)
-                last_id = frag_id, i
-        print(self.fragment[3206].source, self.fragment[3206].likelihood)
+                    par_frag_node = self._fragment_trees[src][par_frag_id]
+                    par_nodes = self._fragment[par_frag_id].nodes
+                    if par_frag_node.reverse:
+                        last_id = par_frag_id, par_nodes[-1]
+                    else:
+                        last_id = par_frag_id, par_nodes[0]
+
+                tree = trees[src]
+                for i in nodes:
+                    n = list(self._swc[i])
+                    n[6] = last_id
+                    n[0] = len(tree) + 1
+                    tree[(frag_id, i)] = tuple(n)
+                    last_id = frag_id, i
+
         for s, t in trees.items():
             for k, v in t.items():
                 n = list(v)
@@ -157,20 +185,15 @@ class BaseCut:
 
         self._problem.solve()
 
+        for frag in self._fragment.values():
+            frag.source = dict.fromkeys(frag.traversed, 1)
+
         for variable in self._problem.variables():
             frag_id, src = variable.name.split('_')[1:]
             frag_id, src = int(frag_id), int(src)
             frag = self._fragment[frag_id]
-            if variable.varValue == 0.5:
-                print(frag_id, src, 0.5)
-            if frag.source is None or frag.likelihood < variable.varValue:
-                frag.source = src
-                frag.likelihood = variable.varValue
-
-        for frag in self._fragment.values():
-            if frag.source is None:
-                frag.source = list(frag.traversed)[0]
-                frag.likelihood = 1
+            assert src in frag.source
+            frag.source[src] = variable.varValue
 
         if self._verbose:
             print("Finished linear programming.")
