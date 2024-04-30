@@ -62,8 +62,17 @@ class TestSomaDetection(unittest.TestCase):
         plt.show()
 
     def test6_consensus(self):
+        path = r"D:\rectify\crop_8bit\18453_9442_3817_6561.v3dpbd"
+        img = PBD().load(path)[0]
         centers_list = []
         centers = DetectImage().predict(self.img, self.res)
+        fig, ax = plt.subplots()
+        ax.imshow(img.max(axis=0), cmap='gray')
+        for p in centers:
+            ax.plot(p[2], p[1], '.r', markersize=15)
+        plt.show()
+        plt.title('Image')
+
         centers_list.append(centers)
         centers = DetectTiledImage([300, 300, 200], nproc=16).predict(
             self.img, [.25, .25, 1.])
@@ -77,8 +86,7 @@ class TestSomaDetection(unittest.TestCase):
         centers_list.append(centers)
         centers = soma_consensus(*centers_list, res=self.res)
         print(centers)
-        path = r"D:\rectify\crop_8bit\18453_9442_3817_6561.v3dpbd"
-        img = PBD().load(path)[0]
+
         fig, ax = plt.subplots()
         ax.imshow(img.max(axis=0), cmap='gray')
         for p in centers:

@@ -20,9 +20,7 @@ class BaseFragment:
         self.end1_adj = set()  # multiple other nodes, connected or close
         self.end2_adj = set()
         self.traversed = set()  # for the simplification of the problem
-
-        self.source = None   # the neuron it belongs to
-        self.likelihood = 0  # the likelihood of this fragment belonging to this neuron
+        self.source = {}   # the neuron it belongs to, source id -> likelihood
 
 
 class BaseNode:
@@ -49,13 +47,24 @@ class BaseNode:
 
 
 class BaseCut:
-    def __init__(self, swc: ListNeuron, soma: list[int], verbose=False):
+    def __init__(self, swc: ListNeuron, soma: list[int], res, likelihood_thr=None, verbose=False):
+        """
+
+        :param swc: swc tree
+        :param soma: list of soma id
+        :param res: resolution in x, y, z
+        :param likelihood_thr: the minimum likelihood allowed for a fragment to be attached to a neuron, left as None
+        to attach it to just the biggest. When multiple sources share a common or big enough likelihood, all of them will be considered.
+        :param verbose:
+        """
         self._verbose = verbose
         self._swc = dict([(t[0], t) for t in swc])
+        self.res = np.array(res)
         self._soma = soma
         self._fragment: dict[int, BaseFragment] = {}
         self._fragment_trees: dict[int, dict[int, BaseNode]] = {}
         self._problem: pulp.LpProblem | None = None
+        self._likelihood_thr: float = likelihood_thr
 
     @property
     def swc(self):
@@ -77,36 +86,59 @@ class BaseCut:
         :return: an swc or a dict of swc
         """
         if not partition:
-            tree = [list(t) for t in self._swc.values()]
+            tree = dict([(t[0], list(t)) for t in self._swc.values()])
+            tag = dict(zip(self._soma, range(len(self._soma))))
             for frag in self._fragment.values():
                 for i in frag.nodes:
-                    tree[i][1] = frag.source
-            tree = [tuple(t) for t in tree]
+                    a = list(frag.source.values())
+                    b = list(frag.source.keys())
+                    a = np.argmax(a)
+                    tree[i][1] = tag[b[a]]
+            tree = [tuple(t) for t in tree.values()]
             return tree
 
         trees = dict([(i, {(-1, 1): (1, *self._swc[i][1:6], -1)}) for i in self._soma])
         for frag_id, frag in self._fragment.items():
-            frag_node = self._fragment_trees[frag.source][frag_id]
-            nodes = self._fragment[frag_id].nodes
-            if not frag_node.reverse:
-                nodes = nodes[::-1]
-            par_frag_id = frag_node.parent
-            if par_frag_id == -1:
-                last_id = -1, 1
-            else:
-                par_frag_node = self._fragment_trees[frag.source][par_frag_id]
-                par_nodes = self._fragment[par_frag_id].nodes
-                if par_frag_node.reverse:
-                    last_id = par_frag_id, par_nodes[-1]
+            candid = []
+            a = list(frag.source.values())
+            b = list(frag.source.keys())
+            if self._likelihood_thr is None:    # max only mode
+                m = None
+                for i in np.argsort(a)[::-1]:
+                    if m is not None and m > a[i]:
+                        break
+                    candid.append(b[i])
+                    m = a[i]
+            else:                               # thresholding mode, bigger than this will all be considered
+                for i in np.argsort(a)[::-1]:
+                    if a[i] < self._likelihood_thr:
+                        break
+                    candid.append(b[i])
+
+            # for each candid source, append the frag nodes
+            for src in candid:
+                frag_node = self._fragment_trees[src][frag_id]
+                nodes = self._fragment[frag_id].nodes
+                if not frag_node.reverse:
+                    nodes = nodes[::-1]
+                par_frag_id = frag_node.parent
+                if par_frag_id == -1:
+                    last_id = -1, 1
                 else:
-                    last_id = par_frag_id, par_nodes[0]
-            tree = trees[frag.source]
-            for i in nodes:
-                n = list(self._swc[i])
-                n[6] = last_id
-                n[0] = len(tree) + 1
-                tree[(frag_id, i)] = tuple(n)
-                last_id = frag_id, i
+                    par_frag_node = self._fragment_trees[src][par_frag_id]
+                    par_nodes = self._fragment[par_frag_id].nodes
+                    if par_frag_node.reverse:
+                        last_id = par_frag_id, par_nodes[-1]
+                    else:
+                        last_id = par_frag_id, par_nodes[0]
+
+                tree = trees[src]
+                for i in nodes:
+                    n = list(self._swc[i])
+                    n[6] = last_id
+                    n[0] = len(tree) + 1
+                    tree[(frag_id, i)] = tuple(n)
+                    last_id = frag_id, i
 
         for s, t in trees.items():
             for k, v in t.items():
@@ -126,9 +158,17 @@ class BaseCut:
         # finding variables for fragment/soma pairs that require solving
         scores = {}      # var_i_s, i: fragment id, s: soma id
         for i, frag in self._fragment.items():
-            scores[i] = {}
-            for s in frag.traversed:
-                scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
+            if len(frag.traversed) > 1:  # mixed sources
+                scores[i] = {}
+                for s in frag.traversed:
+                    scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 0)        # non-negative
+            elif len(frag.traversed) == 1:
+                scores[i] = {}
+                for s in frag.traversed:
+                    scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 1, 1)        # const
+            else:
+                pass
+                # raise ValueError('')
 
         # objective func: cost * score
         self._problem += pulp.lpSum(
@@ -136,7 +176,6 @@ class BaseCut:
                 self._fragment_trees[s][i].cost * score for s, score in frag_vars.items()
             ) for i, frag_vars in scores.items()
         ), "Global Penalty"
-
         # constraints
         for i, frag_vars in scores.items():
             self._problem += (pulp.lpSum(score for score in frag_vars.values()) == 1,
@@ -147,20 +186,17 @@ class BaseCut:
                     self._problem += score <= scores[p][s], \
                         f"Tree Topology Enforcement for Score_{i}_{s}"
 
-        self._problem.solve()
+        self._problem.solve(pulp.PULP_CBC_CMD(msg=0))
+
+        for frag in self._fragment.values():
+            frag.source = dict.fromkeys(frag.traversed, 1)
 
         for variable in self._problem.variables():
             frag_id, src = variable.name.split('_')[1:]
             frag_id, src = int(frag_id), int(src)
             frag = self._fragment[frag_id]
-            if frag.source is None or frag.likelihood < variable.varValue:
-                frag.source = src
-                frag.likelihood = variable.varValue
-
-        for frag in self._fragment.values():
-            if frag.source is None:
-                frag.source = list(frag.traversed)[0]
-                frag.likelihood = 1
+            assert src in frag.source
+            frag.source[src] = variable.varValue
 
         if self._verbose:
             print("Finished linear programming.")
