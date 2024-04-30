@@ -165,7 +165,7 @@ class DetectTiledImage:
 
 
 class DetectTracingMask:
-    def __init__(self, min_radius=2, merge_dist=15, diam_range=(5, 20)):
+    def __init__(self, min_radius=2., merge_dist=15., diam_range=(5., 20.)):
         """
 
         :param min_radius: the minimum radius of the swc nodes to consider, in micrometer

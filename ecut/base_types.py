@@ -168,7 +168,8 @@ class BaseCut:
                 for s in frag.traversed:
                     scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 1, 1)        # const
             else:
-                raise ValueError('')
+                pass
+                # raise ValueError('')
 
         # objective func: cost * score
         self._problem += pulp.lpSum(
@@ -186,7 +187,7 @@ class BaseCut:
                     self._problem += score <= scores[p][s], \
                         f"Tree Topology Enforcement for Score_{i}_{s}"
 
-        self._problem.solve()
+        self._problem.solve(pulp.PULP_CBC_CMD(msg=0))
 
         for frag in self._fragment.values():
             frag.source = dict.fromkeys(frag.traversed, 1)

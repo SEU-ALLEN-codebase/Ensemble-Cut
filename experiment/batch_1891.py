@@ -25,7 +25,8 @@ def main(args):
         # centers_list.append(centers)
         # centers = DetectTiledImage([300, 300, 200]).predict(img, res)
         # centers_list.append(centers)
-        # centers = DetectTracingMask().predict(tree, res)
+        # maxr = max([t[5] for t in tree]) * res[0]
+        # centers = DetectTracingMask(maxr * .75, maxr * 3).predict(tree, res)
         # centers_list.append(centers)
         # centers = DetectDistanceTransform().predict(img, res)
         # centers_list.append(centers)
@@ -34,13 +35,16 @@ def main(args):
         # centers = soma_consensus(*centers_list, res=res)
 
         maxr = max([t[5] for t in tree]) * res[0]
-        centers = DetectTracingMask(min(maxr, 5), 100).predict(tree, res)
+        rad = max(maxr * .5, 5.)
+        centers = DetectTracingMask(rad, 20.).predict(tree, res)
 
         # anneal
         a = MorphAnneal(tree)
         tree = a.run()
 
         # graph cut
+        if len(centers) < 1:
+            centers = [[512, 512, 128]]
         kd = KDTree([t[2:5] for t in tree])
         inds = kd.query(centers, return_distance=False)
         inds = [tree[i[0]][0] for i in inds]
@@ -50,12 +54,13 @@ def main(args):
 
         # pruning
         for k, v in trees.items():
-            p = ErrorPruning(res, anchor_dist=(5., 20.))
-            morph = Morphology(v)
-            a = p.branch_prune(morph, 45, 2)
-            b = p.crossover_prune(morph, 5, 90)
-            # c = p.crossover_prune(morph, check_bif=True)
-            v = swc_handler.prune(v, a | b)
+            v = swc_handler.sort_swc(v)
+            # p = ErrorPruning(res, anchor_dist=20., soma_radius=10.)
+            # morph = Morphology(v)
+            # a = p.branch_prune(morph, 60, 1.5)
+            # b = p.crossover_prune(morph, 2, 60, 90, short_tips_thr=10., no_multi=False)
+            # c = p.crossover_prune(morph, 2, 60, 90, check_bif=True, short_tips_thr=10.)
+            # v = swc_handler.prune(v, a | b | c)
             swc_handler.write_swc(v, str(out_path) + f'_{k}.swc')
     except:
         print_exc()
@@ -65,8 +70,9 @@ def main(args):
 if __name__ == '__main__':
     from tqdm import tqdm
     from multiprocessing import Pool
+
     indir = Path('D:/rectify/my_app2')
-    outdir = Path('D:/rectify/pruned')
+    outdir = Path('D:/rectify/pruned_3')
     outdir.mkdir(exist_ok=True)
     files = sorted(indir.glob('*.swc'))
     outfiles = [outdir / f.name for f in files]

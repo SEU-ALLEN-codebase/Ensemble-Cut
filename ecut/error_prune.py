@@ -8,20 +8,17 @@ from sklearn.decomposition import PCA
 
 class ErrorPruning:
 
-    def __init__(self, res=(.25, .25, 1.), soma_radius=10., anchor_dist=10, gap_thr_ratio=1., epsilon=1e-7):
+    def __init__(self, res=(.25, .25, 1.), soma_radius=10., anchor_dist=5., epsilon=1e-7):
         """
 
         :param res: image resolution in micrometers, (x, y, z)
         :param soma_radius: expected soma radius in micrometers, within which errors are not counted
         :param anchor_dist: the distances of the anchor to the branch node
-        :param gap_thr_ratio:
         :param epsilon: value lower than this will be regarded as 0
         """
         self._res = res
         self._soma_radius = soma_radius
-        # self._near_anchor = anchor_reach[0]
         self._far_anchor = anchor_dist
-        self._gap_thr_ratio = gap_thr_ratio
         self._eps = epsilon
 
     def _length(self, p1: list | np.ndarray, p2=(0, 0, 0), axis=None):
@@ -85,7 +82,7 @@ class ErrorPruning:
 
         return pts, rad, idx
 
-    def _get_anchors(self, morph: Morphology, ind: list[int] | int, dist_thr: float, step_size=0.5):
+    def _get_anchors(self, morph: Morphology, ind: list[int] | int, dist_thr: float):
         """
         get anchors for a set of swc nodes to calculate angles, suppose they are one,
         their center is their mean coordinate,
@@ -229,8 +226,11 @@ class ErrorPruning:
         crossings = self._find_mega_crossing(morph, dist_thr)
         cs = np.array(morph.pos_dict[morph.idx_soma][2:5])
         if check_bif:
-            to_check = [i for i in morph.bifurcation - set.union(*crossings)
-                        if self._length(cs, morph.pos_dict[i][2:5]) > self._soma_radius]
+            if len(crossings) > 0:
+                crossings = set.union(*crossings)
+            else:
+                crossings = set()
+            to_check = [i for i in morph.bifurcation - crossings if self._length(cs, morph.pos_dict[i][2:5]) > self._soma_radius]
         else:
             to_check = crossings
         rm_ind = set()
@@ -296,7 +296,7 @@ class ErrorPruning:
             # remove upstream of protrudes
             for i in list(rm):
                 i = morph.pos_dict[i][6]
-                while i != -1 and i in morph.unifurcation or set(morph.child_dict[i]).issubset(rm):
+                while i != -1 and (i in morph.unifurcation or set(morph.child_dict[i]).issubset(rm)):
                     rm.add(i)
                     i = morph.pos_dict[i][6]
             rm_ind |= rm

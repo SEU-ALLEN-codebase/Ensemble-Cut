@@ -69,8 +69,8 @@ class Distribution:
         cdf_coefficients = pdf_integral.c
         cdf_coefficients[-1] = constant
         self.cdf = np.poly1d(cdf_coefficients)
-        print('cdf: cdf(0) = {}, cdf(pi) = {}'.format(self.cdf(self.scale(0)),
-                                                      self.cdf(self.scale(np.pi))))
+        # print('cdf: cdf(0) = {}, cdf(pi) = {}'.format(self.cdf(self.scale(0)),
+        #                                               self.cdf(self.scale(np.pi))))
 
     def scale(self, val):
         return (val - self._mean) / self._std
