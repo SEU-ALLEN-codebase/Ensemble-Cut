@@ -3,7 +3,7 @@ import numpy as np
 from .swc_handler import get_child_dict
 from sklearn.neighbors import KDTree
 from ._queue import PriorityQueue
-from .base_types import BaseCut
+from .base_types import BaseCut, ListNeuron
 from .graph_metrics import EnsembleMetric, EnsembleNode, EnsembleFragment
 
 
@@ -18,8 +18,8 @@ class ECut(BaseCut):
 
     """
 
-    def __init__(self, swc: list[tuple], soma: list[int], children: dict[set] = None,
-                 adjacency: dict[int, set] | float = 5., metric=EnsembleMetric(), *args, **kwargs):
+    def __init__(self, swc: ListNeuron, soma: list[int], children: dict[set] = None, res=(1., 1., 1.),
+                 adjacency: dict[int, set] | tuple[float] = (5., 10), metric=EnsembleMetric(), *args, **kwargs):
         """
 
         :param swc: swc tree, whose id should match the line number
@@ -28,13 +28,13 @@ class ECut(BaseCut):
         :param adjacency: close non-connecting neighbours
         :param metric: the metric to compute the cost on each fragment
         """
-        super().__init__(swc, soma, *args, **kwargs)
+        super().__init__(swc, soma, res, *args, **kwargs)
         self._metric = metric
         self._children = self._get_children() if children is None else children
         if isinstance(adjacency, dict):
             self._adjacency = adjacency
-        else:
-            self._adjacency = self._get_adjacency(adjacency)
+        elif isinstance(adjacency, tuple):
+            self._adjacency = self._get_adjacency(*adjacency)
         self._end2frag: dict[int, set[int]] | None = None
 
     def _get_children(self) -> dict[int, set]:
@@ -49,19 +49,26 @@ class ECut(BaseCut):
                 children[t[0]] = set()
         return children
 
-    def _get_adjacency(self, dist: float) -> dict[int, set]:
+    def _get_adjacency(self, dist1: float, dist2: float) -> dict[int, set]:
         """
         Generate an adjacency map from the current tree. Parent and children are excluded.
 
-        :param dist: the distance threshold to consider connection between 2 nodes.
+        :param dist1: the distance threshold to consider connection between 2 nodes.
+        :param dist2: the distance threshold to consider connection between 2 critical nodes.
         :return: the adjacency dictionary
         """
-        kd = KDTree([t[2:5] for t in self._swc.values()])
+        kd = KDTree([np.array(t[2:5]) * self.res for t in self._swc.values()])
+        crits = [t for t in self._swc.values() if len(self._children[t[0]]) != 1]
+        kd_c = KDTree([np.array(t[2:5]) * self.res for t in crits])
         keys = np.array(list(self._swc.keys()))
-        inds, dists = kd.query_radius([t[2:5] for t in self._swc.values()], dist, return_distance=True)
+        keys_c = np.array([t[0] for t in crits])
+        inds = kd.query_radius([np.array(t[2:5]) * self.res for t in self._swc.values()], dist1)
+        inds_c = kd_c.query_radius([np.array(t[2:5]) * self.res for t in crits], dist2)
         adjacency = {}
-        for k, i, d in zip(self._swc.values(), inds, dists):
-            adjacency[k[0]] = set(keys[i[d < dist]]) - {k[0], k[6]} - self._children[k[0]]
+        for k, i in zip(self._swc.values(), inds):
+            adjacency[k[0]] = set(keys[i]) - {k[0], k[6]} - self._children[k[0]]
+        for k, i in zip(crits, inds_c):
+            adjacency[k[0]] |= set(keys_c[i]) - {k[0]}
         # ensure it's undirected graph
         for k, v in adjacency.items():
             for i in v:
@@ -124,7 +131,7 @@ class ECut(BaseCut):
         # and non-connecting but close fragment ends will also be considered
         for k, v in self._fragment.items():
             end1 = v.nodes[0]
-            v.end1_adj =  self._end2frag[end1] - {k}        # omit self
+            v.end1_adj = self._end2frag[end1] - {k}        # omit self
             for i in self._adjacency[end1]:     # find adjacent nodes
                 v.end1_adj |= self._end2frag[i]     # add any frag related
             end2 = v.nodes[-1]
