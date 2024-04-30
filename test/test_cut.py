@@ -8,6 +8,7 @@ dat_dir = Path('data')
 
 
 class TestCut(unittest.TestCase):
+
     def test_real_swc(self):
         tree = parse_swc(dat_dir / 'gcut_input.swc')
         g = ECut(tree, [2437, 1397], adjacency=3)

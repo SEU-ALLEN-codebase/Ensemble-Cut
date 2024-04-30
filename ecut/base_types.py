@@ -99,7 +99,6 @@ class BaseCut:
 
         trees = dict([(i, {(-1, 1): (1, *self._swc[i][1:6], -1)}) for i in self._soma])
         for frag_id, frag in self._fragment.items():
-
             candid = []
             a = list(frag.source.values())
             b = list(frag.source.keys())

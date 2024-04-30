@@ -16,7 +16,6 @@ if __name__ == '__main__':
     maxr = max([t[5] for t in tree]) * .3
     rad = max(maxr * .5, 5.)
     centers = DetectTracingMask(rad, 20.).predict(tree, [.3, .3, 1])
-
     # anneal
     a = MorphAnneal(tree)
     tree = a.run()
