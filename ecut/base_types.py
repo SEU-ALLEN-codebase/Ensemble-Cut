@@ -192,6 +192,8 @@ class BaseCut:
             frag.source = dict.fromkeys(frag.traversed, 1)
 
         for variable in self._problem.variables():
+            if 'dummy' in variable.name:
+                continue
             frag_id, src = variable.name.split('_')[1:]
             frag_id, src = int(frag_id), int(src)
             frag = self._fragment[frag_id]
