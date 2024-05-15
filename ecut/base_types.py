@@ -37,11 +37,11 @@ class BaseNode:
         self.id = id
         self.parent = None
         self.reverse = False
-        self.cost = np.inf
+        self.dij_cost = np.inf
         self.visited = False
         self.passing_other_soma = False
 
-    def update(self, **kwargs):
+    def set(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -168,14 +168,20 @@ class BaseCut:
                     scores[i][s] = pulp.LpVariable(f'Score_{i}_{s}', 1, 1)        # const
             else:
                 pass
-                # raise ValueError('')
 
         # objective func: cost * score
         self._problem += pulp.lpSum(
             pulp.lpSum(
-                self._fragment_trees[s][i].cost * score for s, score in frag_vars.items()
+                self._fragment_trees[s][i].dij_cost * score for s, score in frag_vars.items()
             ) for i, frag_vars in scores.items()
         ), "Global Penalty"
+
+        for i, frag_vars in scores.items():
+            for s, score in frag_vars.items():
+                if self._fragment_trees[s][i].dij_cost == np.inf:
+                    print(self._fragment_trees[s][i].dij_cost == np.inf)
+                    print(s, i, self.fragment[i].traversed, self._fragment_trees[s][i].parent, self._fragment_trees[s][i].dij_cost)
+
         # constraints
         for i, frag_vars in scores.items():
             self._problem += (pulp.lpSum(score for score in frag_vars.values()) == 1,
@@ -215,7 +221,7 @@ class BaseMetric:
         """
         pass
 
-    def __call__(self, cut: BaseCut, soma: int, frag_par: int, frag_ch: int, reverse: bool) -> dict:
+    def __call__(self, cut: BaseCut, soma: int, frag_par: int, frag_ch: int, reverse: bool):
         """
         Get the cost of the current fragment in a fragment tree.
 

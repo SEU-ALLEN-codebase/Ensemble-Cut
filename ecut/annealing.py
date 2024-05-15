@@ -18,15 +18,13 @@ from sklearn.neighbors import KDTree
 
 
 class MorphAnneal:
-    def __init__(self, swc: ListNeuron, min_gap=10., radius_gap=.5, min_step=5., min_step_ratio=.5, step_size=.5,
-                 epsilon=1e-7, res=(1,1,1), drop_len=20.):
+    def __init__(self, swc: ListNeuron, radius_gap_factor=1., min_step=.2, step_size=.1,
+                 epsilon=1e-7, res=(.3, .3, 1), drop_len=5.):
         self.morph = Morphology(swc)
-        self._min_gap = min_gap
         self._eps = epsilon
         self._step_size = step_size
-        self._radius_gap = radius_gap
+        self._radius_gap_factor = radius_gap_factor
         self._min_step = min_step
-        self._min_step_ratio = min_step_ratio
         self._res = np.array(res)
         self._drop_len = drop_len
         self.new_swc = self.seg_tree = None
@@ -47,8 +45,11 @@ class MorphAnneal:
         tot_len = self._dist(pts2, pts1, axis=-1).sum()
         return tot_len
 
-    def _get_interp(self, nodes: list[int]):
-        nodes = [self.new_swc[nodes[0]][6], *nodes]
+    def _get_interp(self, nodes: list[int], root=None):
+        if root is not None:
+            nodes = [root, *nodes]
+        else:
+            nodes = [self.new_swc[nodes[0]][6], *nodes]
         rad = np.array([self.new_swc[i][5] for i in nodes])
         pos = np.array([self.new_swc[i][2:5] for i in nodes])
         lengths = self._dist(pos[1:], pos[:-1], axis=-1)
@@ -70,13 +71,11 @@ class MorphAnneal:
         step = min(cum_len1[-1], cum_len2[-1])
         while step > 0:
             p1 = pos_interp1(step)
-            r1 = rad_interp1(step)
-            # r1 = rad_interp1
             p2 = pos_interp2(step)
-            r2 = rad_interp2(step)
-            # r2 = rad_interp2
-            gap = self._dist(p1, p2)
-            if gap - r1 - r2 < self._radius_gap * (r1 + r2):
+            r1 = rad_interp1(step) * self._res.dot((.5,.5,0))
+            r2 = rad_interp2(step) * self._res.dot((.5,.5,0))
+            gap = self._dist(p1, p2) - r1 - r2
+            if gap < self._radius_gap_factor * (r1 + r2):
                 break
             step -= self._step_size
         i = j = -1
@@ -88,7 +87,7 @@ class MorphAnneal:
             if c > step:
                 break
             j += 1
-        return step, step / min(cum_len1[-1], cum_len2[-1]), i, j
+        return step, i, j
 
     def _annotate_length(self, seg_tree: ListNeuron, seg_dict: dict[int, list[int]]):
         """
@@ -119,9 +118,12 @@ class MorphAnneal:
             stop2 = max(stop2, 0)
             p1 = self.new_swc[nodes1[stop1]][2:5]
             p2 = self.new_swc[nodes2[stop2]][2:5]
-            dist = self._dist(p1, p2)
-            if dist > self._min_gap:
-                return {}
+            r1 = self.new_swc[nodes1[stop1]][5] * self._res.dot((.5,.5,0))
+            r2 = self.new_swc[nodes2[stop2]][5] * self._res.dot((.5,.5,0))
+            gap = self._dist(p1, p2) - r1 - r2
+            if gap > self._radius_gap_factor * (r1 + r2):
+                return set()
+
         kd = KDTree([self.new_swc[i][2:5] for i in nodes1[:stop1 + 1]])
         for i in range(stop2 + 1):
             i = nodes2[i]
@@ -129,16 +131,17 @@ class MorphAnneal:
             d, j = kd.query([pos])
             d = d[0][0]
             j = nodes1[j[0][0]]
-            r1 = self.new_swc[i][5]
-            r2 = self.new_swc[j][5]
+            r1 = self.new_swc[i][5] * self._res.dot((.5,.5,0))
+            r2 = self.new_swc[j][5] * self._res.dot((.5,.5,0))
             self.new_swc[i][2:5] = (pos * r1 + np.array(self.new_swc[j][2:5]) * r2) / (r1 + r2)
-            self.new_swc[i][5] = (r1 + r2) / 2
+            self.new_swc[i][5] = max(r1, r2) / self._res.dot((.5,.5,0))
         # nullify the covered nodes
         for i in range(stop1 + 1):
             i = nodes1[i]
             self.new_swc[i][6] = -2
         self.seg_tree[par_branch][9].remove(branch1)
         merge_parent_branch = len(self.seg_tree[par_branch][9]) < 2
+
         if stop1 + 1 < len(nodes1) or len(self.seg_tree[branch1][9]) > 0:
             # the remaining of branch1 has to go to the sibling
             to_append = nodes2[stop2]
@@ -212,6 +215,120 @@ class MorphAnneal:
                 del self.seg_tree[par_branch]
             return {branch2}
 
+    def _commit_merge_daughter(self, branch1, stop1, stop2):
+        """
+
+        :param branch1: the daughter branch
+        :param stop1: the stop pos on the daughter branch
+        :param stop2: the stop pos on the parent branch, reversed, starting from last but 1 node.
+        :return:
+        """
+
+        branch2 = par_branch = self.seg_tree[branch1][6]      # the parent branch
+        pp = self.seg_tree[par_branch][6]           # the parent node of parent branch
+        nodes1 = self.seg_tree[branch1][7]          # the nodes of daughter branch
+        nodes2 = self.seg_tree[par_branch][7][-2::-1] + [pp]    # the nodes of parent branch, reversed
+
+        if stop1 == -1 or stop2 == -1:      # the stop is before the first point
+            stop1 = max(stop1, 0)
+            stop2 = max(stop2, 0)
+            p1 = self.new_swc[nodes1[stop1]][2:5]
+            p2 = self.new_swc[nodes2[stop2]][2:5]
+            r1 = self.new_swc[nodes1[stop1]][5] * self._res.dot((.5,.5,0))
+            r2 = self.new_swc[nodes2[stop2]][5] * self._res.dot((.5,.5,0))
+            gap = self._dist(p1, p2) - r1 - r2
+            if gap > self._radius_gap_factor * (r1 + r2):
+                return set()
+
+        # merge, modify the parent branch nodes
+        kd = KDTree([self.new_swc[i][2:5] for i in nodes1[:stop1 + 1]])
+        for i in range(stop2 + 1):
+            i = nodes2[i]
+            pos = np.array(self.new_swc[i][2:5])
+            d, j = kd.query([pos])
+            d = d[0][0]
+            j = nodes1[j[0][0]]
+            r1 = self.new_swc[i][5] * self._res.dot((.5,.5,0))
+            r2 = self.new_swc[j][5] * self._res.dot((.5,.5,0))
+            self.new_swc[i][2:5] = (pos * r1 + np.array(self.new_swc[j][2:5]) * r2) / (r1 + r2)
+            self.new_swc[i][5] = max(r1, r2) / self._res.dot((.5,.5,0))
+        # nullify the covered nodes
+        for i in range(stop1 + 1):
+            i = nodes1[i]
+            self.new_swc[i][6] = -2
+        self.seg_tree[par_branch][9].remove(branch1)
+        merge_parent_branch = len(self.seg_tree[par_branch][9]) < 2
+
+        if stop1 + 1 < len(nodes1) or len(self.seg_tree[branch1][9]) > 0:
+            # the remaining of branch1 has to go to the sibling
+
+            to_append = nodes2[stop2]
+            if to_append != pp:      # the anneal point has to be new branch, or to_append == branch2
+                temp = self.seg_tree[par_branch][7][:-stop2-1]
+                if merge_parent_branch:   # the parent branch can be updated!
+                    branch2 = list(self.seg_tree[par_branch][9])[0]  # the other daughter branch
+                    self.seg_tree[branch2][6] = to_append
+                    self.seg_tree[branch2][7] = self.seg_tree[par_branch][7][-stop2-1:] + self.seg_tree[branch2][7]
+                    self.seg_tree[branch2][8] = self._get_seg_len(self.seg_tree[branch2][7])
+                    seg = self.seg_tree[to_append] = self.seg_tree[par_branch]
+                    if pp != -1:
+                        self.seg_tree[pp][9].remove(par_branch)
+                        self.seg_tree[pp][9].add(to_append)
+                    del self.seg_tree[par_branch]
+                    seg[0] = to_append
+                    seg[7] = temp
+                    seg[8] = self._get_seg_len(seg[7])
+                else:
+                    self.seg_tree[to_append] = [*self.new_swc[to_append][:6], pp, temp, self._get_seg_len(temp), {par_branch}]
+                    self.seg_tree[par_branch][6] = to_append
+                    self.seg_tree[pp][9].remove(par_branch)
+                    self.seg_tree[pp][9].add(to_append)
+                    temp = self.seg_tree[branch2][7] = self.seg_tree[branch2][7][-stop2-1:]
+                    self.seg_tree[branch2][8] = self._get_seg_len(temp)
+            elif merge_parent_branch:       # no need to make new branch for to_append
+                branch2 = list(self.seg_tree[par_branch][9])[0]     # the other daughter branch
+                # also check if branch2 can be merged to parent
+                self.seg_tree[branch2][6] = pp
+                temp = self.seg_tree[branch2][7] = self.seg_tree[par_branch][7] + self.seg_tree[branch2][7]
+                self.seg_tree[branch2][8] = self._get_seg_len(temp)
+                if pp != -1:
+                    self.seg_tree[pp][9].remove(par_branch)
+                    self.seg_tree[pp][9].add(branch2)
+                del self.seg_tree[par_branch]
+
+            # append branch1 stop1's child to sibling
+            if stop1 + 1 < len(nodes1):
+                # branch1 isn't over: keep the branch, update it
+                self.seg_tree[branch1][6] = self.new_swc[nodes1[stop1 + 1]][6] = to_append
+                temp = self.seg_tree[branch1][7] = nodes1[stop1 + 1:]
+                self.seg_tree[branch1][8] = self._get_seg_len(temp)
+                self.seg_tree[to_append][9].add(branch1)
+                return {to_append, branch1, branch2}
+            else:
+                assert len(self.seg_tree[branch1][9]) > 1
+                # branch1 is over but has child segment: remove branch1
+                for i in self.seg_tree[branch1][9]:
+                    self.seg_tree[i][6] = self.new_swc[self.seg_tree[i][7][0]][6] = to_append
+                    self.seg_tree[to_append][9].add(i)
+                del self.seg_tree[branch1]
+                return self.seg_tree[to_append][9] | {to_append}
+
+        else:
+            # here branch1 is fully combined with parental branch
+            del self.seg_tree[branch1]
+            if merge_parent_branch:
+                branch2 = list(self.seg_tree[par_branch][9])[0]     # the other doughter branch
+                # also check if branch2 can be merged to parent
+                pp = self.seg_tree[branch2][6] = self.seg_tree[par_branch][6]
+                temp = self.seg_tree[branch2][7] = self.seg_tree[par_branch][7] + self.seg_tree[branch2][7]
+                self.seg_tree[branch2][8] = self._get_seg_len(temp)
+                if pp != -1:
+                    self.seg_tree[pp][9].remove(par_branch)
+                    self.seg_tree[pp][9].add(branch2)
+                del self.seg_tree[par_branch]
+                return {branch2}
+            return {par_branch}
+
     def run(self):
         # prepare data
         self.new_swc = dict((t[0], list(t)) for t in self.morph.tree)
@@ -249,23 +366,42 @@ class MorphAnneal:
                 to_merge = sib[np.argmin(lengths)]          # choose the shortest to merge with
                 updated = self._commit_merge(head, to_merge, len(self.seg_tree[head][7]) - 1, 0)
             else:
-                # try merge all siblings
-                max_step = max_ratio = to_merge = j1 = j2 = 0
+                # try merge all siblings (and parent)
+                steps = []
+                j1 = []
+                j2 = []
+                par = self.seg_tree[head][6]
+                pcomp = False
+                if self.seg_tree[par][6] != -1 and len(self.seg_tree[par][7]) > 0:
+                    pcomp = True
+                    pn = self.seg_tree[par][7][-2::-1] + [self.seg_tree[par][6]]
+                    par_interp = self._get_interp(pn, par)
+                    step, i1, i2 = self._try_merge(*head_interp, *par_interp)
+                    steps.append(step)
+                    j1.append(i1)
+                    j2.append(i2)
                 for s in sib:
                     sib_interp = self._get_interp(self.seg_tree[s][7])
                     # sib must be longer than head, so no need to worry...
-                    step, ratio, i1, i2 = self._try_merge(*head_interp, *sib_interp)
-
-                    if ratio > max_ratio:
-                        max_step = step
-                        max_ratio = ratio
-                        to_merge = s
-                        j1 = i1
-                        j2 = i2
-                if max_step >= self._min_step or max_ratio > self._min_step_ratio:
-                    updated = self._commit_merge(head, to_merge, j1, j2)
+                    step, i1, i2 = self._try_merge(*head_interp, *sib_interp)
+                    steps.append(step)
+                    j1.append(i1)
+                    j2.append(i2)
+                merge_ord = np.argsort(steps)[::-1]
+                for ord in merge_ord:
+                    if steps[ord] >= self._min_step:
+                        if pcomp and ord == 0:
+                            updated = self._commit_merge_daughter(head, j1[ord], j2[ord])
+                        else:
+                            if pcomp:
+                                ss = sib[ord - 1]
+                            else:
+                                ss = sib[ord]
+                            updated = self._commit_merge(head, ss, j1[ord], j2[ord])
+                        break
 
             for i in updated:       # successfully commit
+                # check the length
                 pq.add_task(i, self.seg_tree[i][8])
 
         for v in self.seg_tree.values():

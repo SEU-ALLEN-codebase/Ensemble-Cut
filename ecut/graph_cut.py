@@ -1,10 +1,76 @@
 import numpy as np
-
+from .morphology import Morphology
 from .swc_handler import get_child_dict
 from sklearn.neighbors import KDTree
 from ._queue import PriorityQueue
 from .base_types import BaseCut, ListNeuron
-from .graph_metrics import EnsembleMetric, EnsembleNode, EnsembleFragment
+from .graph_metrics import EnsembleMetric, EnsembleFragmentNode, EnsembleFragment
+
+
+class Adjacency:
+    def __init__(self, tree: ListNeuron, search_dist=30., up_dist=10., gap_ratio=5., path_euc_thr=3., res=(1., 1., 1.)):
+        """
+        Generate an adjacency map from the current tree. Parent and children are excluded.
+
+        :return: the adjacency dictionary
+        """
+        res = np.array(res)
+        morph = Morphology(tree)
+
+        def get_path(n1, n2):
+            t1 = [n1]
+            t2 = [n2]
+            while morph.pos_dict[t1[-1]][6] != -1:
+                t1.append(morph.pos_dict[t1[-1]][6])
+                if t1[-1] == n2:
+                    return t1
+            while morph.pos_dict[t2[-1]][6] != -1:
+                t2.append(morph.pos_dict[t2[-1]][6])
+                if t2[-1] == n1:
+                    return t2
+            while t1[-1] == t2[-1]:
+                t1.pop(-1)
+                t2.pop(-1)
+            t2.reverse()
+            return t1 + t2
+
+        def get_path_distance(n1, n2):
+            path = get_path(n1, n2)
+            pts = [morph.pos_dict[t][2:5] for t in path]
+            return np.linalg.norm((np.array(pts[1:]) - pts[:-1]) * res)
+
+        adjacency = {}
+        keys = list(morph.pos_dict.keys())
+        for k in keys:
+            adjacency[k] = set()
+        kd = KDTree([morph.pos_dict[k][2:5] * res for k in keys])
+        v = res.dot((.5, .5, 0))
+        for k in morph.tips:
+            p = morph.pos_dict[k][6]
+            r1 = morph.pos_dict[k][5]
+            while p != -1 and np.linalg.norm((np.array(morph.pos_dict[k][2:5]) - morph.pos_dict[p][2:5]) * res) < up_dist:
+                r1 = max(r1, morph.pos_dict[p][5])
+                p = morph.pos_dict[p][6]
+            r1 *= v
+            candid = []
+            inds, dists = kd.query_radius([morph.pos_dict[k][2:5]] * res, search_dist, return_distance=True)
+            for i, d in zip(inds[0], dists[0]):
+                i = keys[i]
+                r2 = morph.pos_dict[i][5] * v
+                if k != i and get_path_distance(k, i) > d * path_euc_thr and d < gap_ratio * (r1 + r2):
+                    candid.append(i)
+            if k not in adjacency:
+                adjacency[k] = set(candid)
+            else:
+                adjacency[k] |= set(candid)
+            for i in candid:
+                if i not in adjacency:
+                    adjacency[i] = set()
+                adjacency[i].add(k)
+        self._adj = adjacency
+
+    def __getitem__(self, item):
+        return self._adj[item]
 
 
 class ECut(BaseCut):
@@ -15,11 +81,10 @@ class ECut(BaseCut):
 
     2. We use fragment instead of branch as the basis for linear programming. It allows us to more naturally process
     somata and breakups.
-
     """
 
-    def __init__(self, swc: ListNeuron, soma: list[int], children: dict[set] = None, res=(1., 1., 1.),
-                 adjacency: dict[int, set] | tuple[float] = (5., 10), metric=EnsembleMetric(), *args, **kwargs):
+    def __init__(self, swc: ListNeuron, soma: list[int], adjacency: Adjacency, metric=EnsembleMetric(),
+                 res=(.3, .3, 1.), *args, **kwargs):
         """
 
         :param swc: swc tree, whose id should match the line number
@@ -30,11 +95,8 @@ class ECut(BaseCut):
         """
         super().__init__(swc, soma, res, *args, **kwargs)
         self._metric = metric
-        self._children = self._get_children() if children is None else children
-        if isinstance(adjacency, dict):
-            self._adjacency = adjacency
-        elif isinstance(adjacency, tuple):
-            self._adjacency = self._get_adjacency(*adjacency)
+        self._children = self._get_children()
+        self._adjacency = adjacency
         self._end2frag: dict[int, set[int]] | None = None
 
     def _get_children(self) -> dict[int, set]:
@@ -48,34 +110,6 @@ class ECut(BaseCut):
             else:
                 children[t[0]] = set()
         return children
-
-    def _get_adjacency(self, dist1: float, dist2: float) -> dict[int, set]:
-        """
-        Generate an adjacency map from the current tree. Parent and children are excluded.
-
-        :param dist1: the distance threshold to consider connection between 2 nodes.
-        :param dist2: the distance threshold to consider connection between 2 critical nodes.
-        :return: the adjacency dictionary
-        """
-        kd = KDTree([np.array(t[2:5]) * self.res for t in self._swc.values()])
-        crits = [t for t in self._swc.values() if len(self._children[t[0]]) != 1]
-        kd_c = KDTree([np.array(t[2:5]) * self.res for t in crits])
-        keys = np.array(list(self._swc.keys()))
-        keys_c = np.array([t[0] for t in crits])
-        inds = kd.query_radius([np.array(t[2:5]) * self.res for t in self._swc.values()], dist1)
-        inds_c = kd_c.query_radius([np.array(t[2:5]) * self.res for t in crits], dist2)
-        adjacency = {}
-        for k, i in zip(self._swc.values(), inds):
-            adjacency[k[0]] = set(keys[i]) - {k[0], k[6]} - self._children[k[0]]
-        for k, i in zip(crits, inds_c):
-            adjacency[k[0]] |= set(keys_c[i]) - {k[0]}
-        # ensure it's undirected graph
-        for k, v in adjacency.items():
-            for i in v:
-                adjacency[i].add(k)
-        if self._verbose:
-            print("Adjacency computed.")
-        return adjacency
 
     def run(self):
         if self._verbose:
@@ -180,14 +214,14 @@ class ECut(BaseCut):
         fragment_tree = self._fragment_trees[soma] = {}
         other_soma = set(self._soma) - {soma}
         for i in self._fragment:
-            fragment_tree[i] = EnsembleNode(i)
+            fragment_tree[i] = EnsembleFragmentNode(i)
 
         # initialize the starting fragments (connected to the designated soma)
         for i in self._end2frag[soma]:
             cur_node = fragment_tree[i]
             queue.add_task(i, 0)
             # when soma is the far end of this fragment, invert
-            cur_node.update(cost=0, parent=-1, reverse=(soma == self._fragment[i].nodes[0]))
+            cur_node.set(dij_cost=0, parent=-1, reverse=(soma == self._fragment[i].nodes[0]))
 
         # BFS
         while not queue.empty():
@@ -212,23 +246,23 @@ class ECut(BaseCut):
                 # here a fragment can be connected on both ends, a rare but possible case
                 # if the connection is on end1, means the next fragment is reversed
                 if cheapest in next_frag.end1_adj:
-                    metrics = self._metric(self, soma, cheapest, i, reverse=True)
-                    if metrics['cost'] < next_node.cost:
+                    test = self._metric(self, soma, cheapest, i, reverse=True)
+                    if test.dij_cost < next_node.dij_cost:
                         # if the cost is lower, update the fragment node
                         # it's on end1, far end, so invert
-                        next_node.update(**metrics, parent=cheapest, reverse=True)
-                        queue.add_task(i, metrics['cost'])
+                        next_node.update(test)
+                        queue.add_task(i, test.dij_cost)
                         # if this fragment is leaving another soma
                         if next_frag.nodes[0] in other_soma:
                             next_node.passing_other_soma = True
                         else:
                             next_node.passing_other_soma = cur_node.passing_other_soma
                 if cheapest in next_frag.end2_adj:
-                    metrics = self._metric(self, soma, cheapest, i, reverse=False)
-                    if metrics['cost'] < next_node.cost:
+                    test = self._metric(self, soma, cheapest, i, reverse=False)
+                    if test.dij_cost < next_node.dij_cost:
                         # it's on end2, near end, keep original
-                        next_node.update(**metrics, parent=cheapest, reverse=False)
-                        queue.add_task(i, metrics['cost'])
+                        next_node.update(test)
+                        queue.add_task(i, test.dij_cost)
                         if next_frag.nodes[-1] in other_soma:
                             next_node.passing_other_soma = True
                         else:
@@ -244,15 +278,15 @@ class ECut(BaseCut):
                     continue
                 if cheapest in next_frag.end1_adj:
                     if par_cheapest == -1:
-                        next_node.update(cost=0, parent=-1, reverse=True)
+                        next_node.set(dij_cost=0, parent=-1, reverse=True)
                         queue.add_task(i, 0)
                     else:
-                        metrics = self._metric(self, soma, par_cheapest, i, reverse=True)
-                        if metrics['cost'] < next_node.cost:
+                        test = self._metric(self, soma, par_cheapest, i, reverse=True)
+                        if test.dij_cost < next_node.dij_cost:
                             # if the cost is lower, update the fragment node
                             # it's on end1, far end, so invert
-                            next_node.update(**metrics, parent=par_cheapest, reverse=True)
-                            queue.add_task(i, metrics['cost'])
+                            next_node.update(test)
+                            queue.add_task(i, test.dij_cost)
                             # if this fragment is leaving another soma
                             if next_frag.nodes[0] in other_soma:
                                 next_node.passing_other_soma = True
@@ -260,14 +294,14 @@ class ECut(BaseCut):
                                 next_node.passing_other_soma = cur_node.passing_other_soma
                 if cheapest in next_frag.end2_adj:
                     if par_cheapest == -1:
-                        next_node.update(cost=0, parent=-1, reverse=False)
+                        next_node.set(dij_cost=0, parent=-1, reverse=False)
                         queue.add_task(i, 0)
                     else:
-                        metrics = self._metric(self, soma, par_cheapest, i, reverse=False)
-                        if metrics['cost'] < next_node.cost:
+                        test = self._metric(self, soma, par_cheapest, i, reverse=False)
+                        if test.dij_cost < next_node.dij_cost:
                             # it's on end2, near end, keep original
-                            next_node.update(**metrics, parent=par_cheapest, reverse=False)
-                            queue.add_task(i, metrics['cost'])
+                            next_node.update(test)
+                            queue.add_task(i, test.dij_cost)
                             if next_frag.nodes[-1] in other_soma:
                                 next_node.passing_other_soma = True
                             else:
