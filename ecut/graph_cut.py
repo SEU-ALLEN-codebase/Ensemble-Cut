@@ -7,6 +7,64 @@ from .base_types import BaseCut, ListNeuron
 from .graph_metrics import EnsembleMetric, EnsembleFragmentNode, EnsembleFragment
 
 
+# class Fragmentation:
+#     """
+#     Turn swc into a fragment graph. In future this function would be seperated from the graph cut
+#     """
+#     def __init__(self, tree, res=(1., 1., 1.)):
+#         self._res = np.array(res)
+#         self._morph = Morphology(tree)
+#
+#     def get_adjacency(self, search_dist=30., up_dist=10., gap_ratio=5., path_euc_thr=3.):
+#         all_trails = {}
+#         n2trail = {}
+#         for t in self._morph.tips:
+#             trail = [t]
+#             n2trail[t] = [(t, 0)]
+#             pn = self._morph.pos_dict[t][6]
+#             while pn != self._morph.p_soma:
+#                 trail.append(pn)
+#                 if pn not in n2trail:
+#                     n2trail[pn] = []
+#                 n2trail[pn].append((trail[0], len(n2trail[pn])))
+#                 if pn not in self._morph.unifurcation:
+#                     all_trails[trail[0]] = trail
+#                     if pn in all_trails or pn == self._morph.idx_soma:
+#                         break
+#                     trail = [pn]
+#                     n2trail[pn].append((pn, len(n2trail[pn])))
+#                 pn = self._morph.pos_dict[pn][6]
+#         kd = KDTree([t[2:5] * self._res for t in self._morph.tree])
+#         pos = [self._morph.pos_dict[p][2:5] * self._res for p in self._morph.tips]
+#
+#         # search through all the branches
+#         new_conn = {} # adjacency
+#         for inds, dists, tip in zip(*kd.query_radius(pos, search_dist, return_distance=True), self._morph.tips):
+#             tr_this = n2trail[tip]      # tip trail
+#             p = self._morph.pos_dict[k][6]
+#             r1 = self._morph.pos_dict[k][5]
+#             while p != -1 and np.linalg.norm(
+#                     (np.array(self._morph.pos_dict[k][2:5]) - self._morph.pos_dict[p][2:5]) * self._res) < up_dist:
+#                 r1 = max(r1, self._morph.pos_dict[p][5])
+#                 p = self._morph.pos_dict[p][6]
+#             r1 *= v
+#
+#             for i, d in zip(inds, dists):
+#                 t = self._morph.pos_dict[i]
+#                 if t[0] == tip:     # same node
+#                     continue
+#                 tr = n2trail[t]
+#                 if len(tr) > 1:     # branch node
+#
+#                     if t not in new_conn:
+#                         new_conn[t] = []
+#                     new_conn[t].append(tip)
+#                     continue
+#                 tr = tr[0]      # unifurcation
+#                 if tr[0] == tr_this[0]:     # belong to the same trail
+#                     continue
+
+
 class Adjacency:
     def __init__(self, tree: ListNeuron, search_dist=30., up_dist=10., gap_ratio=5., path_euc_thr=3., res=(1., 1., 1.)):
         """

@@ -37,14 +37,14 @@ class DetectImage:
     2. otsu -> triangle thresholding
     """
 
-    def __init__(self, processing_size=(160, 160, 50), diam_range=(5, 20)):
+    def __init__(self, processing_res=1., diam_range=(5, 20)):
         """
 
-        :param processing_size: the image size during processing, in x, y, z.
+        :param processing_res: the image size during processing, in x, y, z.
         Downsize the image to the optimal range for morphological operations. the z size should be small as possible
         :param diam_range: the minimum and maximum diameter in micrometers allowed for the detected somata.
         """
-        self._processing_size = processing_size
+        self._processing_res = processing_res
         self._diam_range = diam_range
 
     def predict(self, img, res: list[float], thr=None) -> list[np.ndarray]:
@@ -57,14 +57,13 @@ class DetectImage:
         """
         assert len(res) == img.ndim == 3, "Only 3D images are supported"
         assert res[0] > 0 and res[1] > 0 and res[2] > 0, "Resolution must be positive"
-        desired_size = np.array(self._processing_size[::-1])
-        zoom_factors = desired_size / img.shape
-        res = np.divide(res[::-1], zoom_factors)
-        sf = res[1:].mean()
+        zoom_factors = np.array(res[::-1]) / self._processing_res
         out = ndimage.zoom(img, zoom=zoom_factors)
         m = np.max(out.flatten())
+        if m == 0:
+            return []
         out = out / m
-        win_size = self._diam_range[1] / sf * 2
+        win_size = int(self._diam_range[1] / self._processing_res * 2)
         if win_size % 2 == 0:
             win_size += 1
         t = filters.threshold_local(out, win_size)
@@ -77,6 +76,8 @@ class DetectImage:
         selem_size = np.amax(np.ceil(zoom_factors)).astype(int)
         clean_selem = morphology.octahedron(selem_size)
         out = morphology.binary_erosion(out, clean_selem)
+        clean_selem = morphology.octahedron(int(self._diam_range[0] / self._processing_res / 2))
+        out = morphology.binary_opening(out, clean_selem)
         out, num_labels = morphology.label(out, background=0, return_num=True)
         properties = ["label", "equivalent_diameter"]
         props = measure.regionprops_table(out, properties=properties)
@@ -85,13 +86,12 @@ class DetectImage:
         centers = []
         for _, row in df_props.iterrows():
             l, d = row[properties]
-            dmu = d * sf
+            dmu = d * self._processing_res
             if self._diam_range[0] <= dmu <= self._diam_range[1]:
                 ids = np.where(out == l)
                 centroid = np.round([np.median(u) for u in ids])
-                centroid = np.divide(centroid, zoom_factors)
+                centroid = np.divide(centroid, zoom_factors)    # original pixel pos
                 centers.append(centroid)
-
         return centers
 
 
@@ -247,6 +247,8 @@ class DetectDistanceTransform:
         sf = res[1:].mean()
         out = ndimage.zoom(img, zoom=zoom_factors)
         m = np.max(out.flatten())
+        if m == 0:
+            return []
         out = out / m
         win_size = self._diam_range[1] / sf * 2
         if win_size % 2 == 0:
@@ -258,26 +260,36 @@ class DetectDistanceTransform:
         else:
             thr = thr / m
         out = out > thr
-        selem_size = np.amax(np.ceil(zoom_factors)).astype(int)
-        clean_selem = morphology.octahedron(selem_size)
+        clean_selem = morphology.octahedron(int(self._diam_range[0] / sf / 4))
         out = morphology.binary_opening(out, clean_selem)
-        mask = ndimage.distance_transform_edt(out, res)
-        out = mask > self._diam_range[0] / 2
+        dt = ndimage.distance_transform_edt(out, res)
+        mask = dt > (self._diam_range[0] / 2)
 
-        out, num_labels = morphology.label(out, background=0, return_num=True)
+        label, num_labels = morphology.label(mask, background=0, return_num=True)
         centers = []
-        for label in range(num_labels):
-            dmu = max(mask[out == label]) * 2
+        for i in range(1, num_labels + 1):
+            ids = np.where(label == i)
+            dmu = max(dt[ids]) * 2
             if self._diam_range[0] <= dmu <= self._diam_range[1]:
-                ids = np.where(out == label)
-                weighted_center = np.average(np.argwhere(out == label), weights=mask[ids], axis=0)
+                weighted_center = np.average(np.argwhere(label == i), weights=dt[ids], axis=0)
                 centers.append(weighted_center / zoom_factors)
 
         return centers
 
 
-def soma_consensus(*centers, radius=10, min_vote=3, merge_dist=30, res=(1,1,1)):
+def soma_consensus(*centers, radius=10, min_vote=None, merge_dist=30, res=(1,1,1)):
+    """
+
+    :param centers:
+    :param radius:
+    :param min_vote:
+    :param merge_dist:
+    :param res:
+    :return:
+    """
     centers = [c for c in centers if len(c) > 0]
+    if min_vote is None:
+        min_vote = len(centers)
     kd_trees = [KDTree(c) for c in centers]
     ans = []
     for i, c in enumerate(centers):

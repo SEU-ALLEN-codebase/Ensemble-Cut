@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 class TestSomaDetection(unittest.TestCase):
     def setUp(self):
         self.swc = parse_swc(r"D:\rectify\my_app2\18453_9442_3817_6561.swc")
-        self.img = PBD().load(r"D:\rectify\crop_8bit\18453_9442_3817_6561.v3dpbd")[0]
+        self.img = PBD().load(r"D:\rectify\my\15257_15413_13333_3271.v3dpbd")[0]
         self.res = [.25, .25, 1]
 
     def test1_brainlit_algorithm(self):
@@ -22,7 +22,7 @@ class TestSomaDetection(unittest.TestCase):
         plt.show()
 
     def test2_tile_brainlit(self):
-        mod = DetectTiledImage([300, 300, 200], nproc=16)
+        mod = DetectTiledImage(nproc=16)
         centers = mod.predict(self.img, self.res)
         print(centers)
         fig, ax = plt.subplots()
